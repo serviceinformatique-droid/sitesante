@@ -13,6 +13,7 @@ const bcrypt  = require('bcryptjs');
 const path    = require('path');
 const { Pool } = require('pg');
 const centrale = require('./centrale');
+const parents = require('./parents');
 
 console.log('[portail] build ndm-sante-portail + centrale-20261011');
 
@@ -127,6 +128,8 @@ async function migrate() {
     await ins(null, 'Fiche Infirmerie', '🏥', SYSTEM_URLS.infirmerie, 2, false, 'infirmerie');
     console.log('[portail] Menus par défaut créés');
   }
+
+  await parents.migrate(db);
 
   // Les menus système suivent toujours les URL du fichier .env
   for (const [code, url] of Object.entries(SYSTEM_URLS)) {
@@ -344,7 +347,7 @@ app.post('/admin/config', requireAdmin, wrap(async (req, res) => {
 app.get('/admin/centrale', requireAdmin, wrap(async (req, res) => {
   const etat = await centrale.etatComplet(db);
   const journal = await db.query('SELECT date, ip, action FROM portail_audit ORDER BY date DESC LIMIT 60');
-  res.render('admin/centrale', { ...etat, journal: journal.rows, apps: centrale.APPS, minLen: centrale.MIN_LEN, msg: req.query.msg, err: req.query.err });
+  res.render('admin/centrale', { ...etat, parentsSync: parents.etat(), journal: journal.rows, apps: centrale.APPS, minLen: centrale.MIN_LEN, msg: req.query.msg, err: req.query.err });
 }));
 
 app.post('/admin/centrale/etablissement', requireAdmin, wrap(async (req, res) => {
@@ -363,14 +366,64 @@ app.post('/admin/centrale/etablissement', requireAdmin, wrap(async (req, res) =>
 app.post('/admin/centrale/mot-de-passe', requireAdmin, async (req, res) => {
   const { app: appKey, type, id, libelle } = req.body || {};
   try {
-    const message = await centrale.changerMotDePasse(db, req.body || {});
+    const r = await centrale.changerMotDePasse(db, req.body || {});
+    let message = typeof r === 'string' ? r : r.message;
     await audit(req, `Mot de passe redéfini — ${appKey} / ${type} : ${String(libelle || id || '').slice(0, 200)}`);
+    // Compte parent commun : le nouveau mot de passe est aussitôt recopié dans l'autre application
+    if (r && typeof r === 'object' && r.parentEmail) {
+      try {
+        const rap = await parents.synchroniser(db, { email: r.parentEmail, source: r.source });
+        if (rap.alignesFs.includes(r.parentEmail) || rap.alignesInf.includes(r.parentEmail)) {
+          message += ' Compte commun : mot de passe également appliqué à ' + (r.source === 'infirmerie' ? 'la Fiche Sanitaire.' : 'la Fiche Infirmerie.');
+        }
+      } catch (e) {
+        message += ` (Synchronisation du compte commun en attente : ${e.message})`;
+      }
+    }
     res.json({ ok: true, message });
   } catch (e) {
     await audit(req, `ÉCHEC changement de mot de passe — ${appKey} / ${type} : ${String(libelle || id || '').slice(0, 200)} (${e.message})`);
     res.status(400).json({ ok: false, error: e.message });
   }
 });
+
+// --- Comptes parents communs Fiche Sanitaire <-> Fiche Infirmerie ---
+function appelInterne(req) {
+  const s = process.env.NDM_INTERNAL_SECRET || '';
+  const g = String(req.headers['x-ndm-internal'] || '');
+  if (s.length < 24 || !g) return false;
+  const a = require('crypto').createHash('sha256').update(s).digest();
+  const b = require('crypto').createHash('sha256').update(g).digest();
+  return require('crypto').timingSafeEqual(a, b);
+}
+// Signal envoyé par les applications à chaque modification de comptes (réseau Docker interne uniquement)
+app.post('/internal/parents/sync', (req, res) => {
+  if (!appelInterne(req)) return res.status(403).json({ ok: false });
+  parents.synchroniser(db).catch((e) => console.error('[parents-communs]', e.message));
+  res.json({ ok: true });
+});
+
+app.post('/admin/centrale/parents/sync', requireAdmin, wrap(async (req, res) => {
+  try {
+    const r = await parents.synchroniser(db);
+    await audit(req, `Synchronisation manuelle des comptes parents (${r.creesFs.length + r.creesInf.length} créé(s), ${r.alignesFs.length + r.alignesInf.length} aligné(s), ${r.conflits.length} conflit(s))`);
+    res.redirect('/admin/centrale?msg=' + encodeURIComponent(`Comptes parents synchronisés : ${r.creesInf.length} créé(s) dans l'Infirmerie, ${r.creesFs.length} dans la Fiche Sanitaire, ${r.alignesFs.length + r.alignesInf.length} mot(s) de passe aligné(s), ${r.conflits.length} conflit(s).`) + '#parents');
+  } catch (e) {
+    res.redirect('/admin/centrale?err=' + encodeURIComponent('Synchronisation impossible : ' + e.message) + '#parents');
+  }
+}));
+
+app.post('/admin/centrale/parents/aligner', requireAdmin, wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const source = req.body.source === 'infirmerie' ? 'infirmerie' : 'fichesanitaire';
+  try {
+    await parents.synchroniser(db, { email, source });
+    await audit(req, `Compte parent commun ${email} aligné sur le mot de passe de ${source === 'infirmerie' ? 'la Fiche Infirmerie' : 'la Fiche Sanitaire'}`);
+    res.redirect('/admin/centrale?msg=' + encodeURIComponent(`Compte ${email} : le mot de passe ${source === 'infirmerie' ? 'de la Fiche Infirmerie' : 'de la Fiche Sanitaire'} est maintenant valable dans les deux applications.`) + '#parents');
+  } catch (e) {
+    res.redirect('/admin/centrale?err=' + encodeURIComponent(e.message) + '#parents');
+  }
+}));
 
 app.use((err, req, res, next) => {
   console.error('[portail] Erreur :', err);
@@ -389,4 +442,5 @@ app.use((err, req, res, next) => {
   }
   const port = process.env.PORT || 3020;
   app.listen(port, '0.0.0.0', () => console.log(`✅ Portail NDM démarré sur le port ${port}`));
+  parents.demarrer(db);
 })();

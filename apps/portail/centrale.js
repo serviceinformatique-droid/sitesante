@@ -153,7 +153,7 @@ async function changerMotDePasse(db, { app, type, id, password }) {
       const u = ((data && data[K_USERS]) || []).find((x) => x && x.id === id);
       if (!u) throw new Error('Compte introuvable dans la Fiche Sanitaire.');
       await call('fichesanitaire', 'POST', '/api/users/upsert', { user: { ...u, password: pwd } });
-      return `Mot de passe de ${u.name || u.email} (${u.email}) modifié dans la Fiche Sanitaire.`;
+      return { message: `Mot de passe de ${u.name || u.email} (${u.email}) modifié dans la Fiche Sanitaire.`, parentEmail: u.role === 'parent' ? String(u.email || '').trim().toLowerCase() : null, source: 'fichesanitaire' };
     }
     if (type === 'trip') {
       const trips = (data && data[K_TRIPS]) || [];
@@ -167,7 +167,7 @@ async function changerMotDePasse(db, { app, type, id, password }) {
 
   if (app === 'infirmerie' && (type === 'staff' || type === 'parent')) {
     const r = await call('infirmerie', 'POST', '/api/internal/set-password', { kind: type, id, password: pwd });
-    return r.message || 'Mot de passe modifié dans la Fiche Infirmerie.';
+    return { message: r.message || 'Mot de passe modifié dans la Fiche Infirmerie.', parentEmail: type === 'parent' ? r.email || null : null, source: 'infirmerie' };
   }
 
   if (app === 'voyages') {

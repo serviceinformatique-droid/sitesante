@@ -1,13 +1,13 @@
 # CAHIER DES CHARGES & REGISTRE DE CONFORMITÉ RGPD
 ## Traitement Informatisé des Fiches d'Infirmerie et Dossiers Médicaux Scolaires
-### Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+### {{ETABLISSEMENT}}
 
 ---
 
 **Référence document :** CDC-RGPD-INFIRMERIE-NDM-2026-V1  
 **Date d'entrée en vigueur :** Rentrée Scolaire 2026  
 **Dernière révision :** Septembre 2026  
-**Établissement :** Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre  
+**Établissement :** {{ETABLISSEMENT}}  
 **Statut :** Établissement Catholique d'Enseignement sous contrat d'association avec l'État  
 **Responsable de traitement :** Chef d'Établissement / Direction Générale  
 **Service utilisateur :** Service Infirmerie Scolaire  
@@ -17,7 +17,7 @@
 
 ## SOMMAIRE EXÉCUTIF
 
-Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre avec :
+Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'établissement {{ETABLISSEMENT}} avec :
 1. Le **Règlement Général sur la Protection des Données (RGPD - Règlement UE 2016/679)** ;
 2. La **Loi n° 78-17 du 6 janvier 1978 modifiée (Loi Informatique et Libertés)** ;
 3. Le **Code de la Santé Publique** (notamment articles L. 1110-4 sur le secret médical et L. 3111-2 sur les obligations vaccinales) ;
@@ -31,7 +31,7 @@ Le présent cahier des charges formalise la conformité stricte de l'application
 | Rubrique | Description officielle |
 | :--- | :--- |
 | **Nom du traitement** | Gestion dématérialisée des fiches de santé scolaires et suivi infirmerie |
-| **Responsable du traitement** | Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre |
+| **Responsable du traitement** | {{ETABLISSEMENT}} |
 | **Finalité principale** | Prise en charge sanitaire, gestion des urgences médicales et suivi de l'obligation vaccinale des élèves scolarisés |
 | **Finalités secondaires** | - Gestion des protocoles d'accueil individualisé (PAI) pour allergies et maladies chroniques<br>- Déclaration d'urgence auprès des services de secours (SAMU 15, Pompiers 18)<br>- Archivage légal de l'autorisation parentale de soins et d'hospitalisation |
 | **Catégories de personnes** | - Élèves mineurs scolarisés (Maternelle, Primaire, Collège, Lycée)<br>- Représentants légaux / Parents d'élèves<br>- Professionnels de santé référents (médecin traitant, spécialiste) |
@@ -185,6 +185,6 @@ En cas d'incident de sécurité (tentative d'intrusion, altération ou indisponi
 
 Fait à Charenton-le-Pont, le 17 septembre 2026.
 
-**Pour l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre :**  
+**Pour l'établissement {{ETABLISSEMENT}} :**  
 *La Direction de l'Établissement & Le Référent Protection des Données (DPO)*  
 Document officiel annexé au Registre des Activités de Traitement de l'Établissement.

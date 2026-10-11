@@ -3,7 +3,7 @@
 - Répondre en **français**.
 - Livrer des **scripts complets** (`cat` / `sh`), jamais d'extraits ni de modifications manuelles à faire à la main.
 - Indiquer **systématiquement** le répertoire où déposer chaque fichier avec **FileZilla** (SFTP, utilisateur `root`, transfert en mode **binaire**) et la commande exacte pour l'exécuter.
-- Après **toute installation ou mise à jour** : régénérer ce README dans `/opt/readme/README.md` (extrêmement détaillé, auto-suffisant, contenant tous les scripts) **et pousser le projet sur GitHub** (`serviceinformatique-droid/ndm-sante`). C'est fait automatiquement par `scripts/installer.sh`.
+- Après **toute installation ou mise à jour** : régénérer ce README dans `/opt/readme/README.md` (extrêmement détaillé, auto-suffisant, contenant tous les scripts) **et pousser le projet sur GitHub** (`serviceinformatique-droid/sitesante`). C'est fait automatiquement par `scripts/installer.sh`.
 - Toutes les applications doivent **fonctionner en iframe** (aucun `X-Frame-Options`, CSP `frame-ancestors` réglable par `FRAME_ANCESTORS`).
 - **100 % serveur, rien en cache navigateur** : en-têtes `Cache-Control: no-store` imposés par la passerelle sur toutes les réponses, ETag / Last-Modified supprimés.
 - **100 % responsive** (téléphone, tablette, ordinateur).
@@ -66,7 +66,7 @@ Les **ports d'origine** de chaque projet sont conservés (8080, 8099, 3001, 3000
 │   ├── installer.sh             # installation / mise à jour idempotente (appelé par l'installateur)
 │   ├── ndm.sh                   # outil d'exploitation (etat, logs, sauvegarde, restaurer, push…)
 │   ├── generer-readme.sh        # génère /opt/readme/README.md + README-CODE-COMPLET.md
-│   ├── push-github.sh           # push vers github.com/serviceinformatique-droid/ndm-sante
+│   ├── push-github.sh           # push vers github.com/serviceinformatique-droid/sitesante
 │   └── fabriquer-installateur.sh# refabrique installer-ndm-sante.sh depuis le code installé
 ├── installer/{header,footer}.sh # en-tête / pied de l'installateur tout-en-un
 ├── docs/
@@ -181,8 +181,8 @@ Tous les mots de passe initiaux sont générés aléatoirement à la 1re install
 Accès : se connecter à `/admin` du portail, bouton **🔐 Gestion centralisée**.
 
 **Nom de l'établissement** : la page affiche le nom actuellement utilisé par chaque application (pastille « à jour » / « différent » / « injoignable »). « Appliquer partout » enregistre le nom dans le portail (`portail_config.etablissement`) et le pousse à :
-- Fiche Sanitaire : clé `cerfa_establishment_name_v1` (fiches, PDF, liste des inscrits, e-mails de relance `{etablissement}`) ;
-- Fiche Infirmerie : `branding.schoolName` (en-tête, PDF A4 ; logo et sous-titre conservés) ;
+- Fiche Sanitaire : clé `cerfa_establishment_name_v1` (fiches, PDF, liste des inscrits, e-mails de relance `{etablissement}`, message d'accueil des nouveaux parents `{etablissement}`) ;
+- Fiche Infirmerie : `branding.schoolName` — **tous** les textes (en-têtes, écrans de connexion parent et personnel, tableau de bord, texte d'autorisation parentale, écran de confirmation, aperçu et PDF A4 de la fiche, titre de l'onglet, cahier des charges RGPD via la variable `{{ETABLISSEMENT}}`, attestation RGPD) ; logo et sous-titre conservés ;
 - Suivi des Voyages : réglage `etablissementNom` (en-tête, pied de page, valeur par défaut des nouveaux voyages) et champ `etablissement` des voyages existants qui portaient l'ancien nom ou le nom par défaut ;
 - Portail : titre « Portail de santé – nom » si la case est cochée.
 Le nom initial vient de `ETABLISSEMENT_NOM` dans `.env`.
@@ -204,6 +204,29 @@ Le nom initial vient de `ETABLISSEMENT_NOM` dans `.env`.
 La **passerelle nginx supprime ces deux en-têtes** de toute requête venant de l'extérieur (`proxy_set_header X-Ndm-Internal ""`) : seul le portail, à l'intérieur du réseau Docker, peut les utiliser. Comparaison à temps constant, secret de 24 caractères minimum exigé.
 
 **Sécurité de l'administration du portail** : 5 échecs de connexion par adresse IP ⇒ blocage 15 min ; session régénérée à la connexion (anti-fixation). La console centrale donne la main sur tous les comptes : choisir un mot de passe administrateur du portail long et unique.
+
+### 8ter. Comptes parents communs Fiche Sanitaire ⇄ Fiche Infirmerie (v1.3.0)
+
+**Principe : un parent = une adresse e-mail = un compte valable dans les deux applications** (mêmes identifiant, mot de passe, question et réponse secrètes).
+
+| Événement | Effet automatique |
+|---|---|
+| Inscription dans la Fiche Sanitaire | compte créé dans la Fiche Infirmerie (nom, prénom, téléphone, empreintes) |
+| Inscription dans la Fiche Infirmerie | compte créé dans la Fiche Sanitaire (+ message d'accueil de la messagerie) |
+| Changement de mot de passe (par le parent, « mot de passe oublié », console centrale, administration de la Fiche Sanitaire) | recopié dans l'autre application ; sessions ouvertes du compte fermées de l'autre côté |
+| Compte supprimé d'un côté après synchronisation | **non recréé** (la suppression est respectée ; l'autre compte est conservé) |
+| Parent inscrit séparément dans les deux applications avec des mots de passe différents (avant la v1.3.0) | **conflit** affiché dans la console centrale : bouton « Garder celui de la Fiche Sanitaire / de l'Infirmerie », ou nouveau mot de passe défini depuis la console (appliqué aux deux) |
+| Adresse déjà utilisée par un compte du personnel de la Fiche Sanitaire | non synchronisé (signalé) |
+
+**Déclenchement** : chaque application prévient le portail dès qu'un compte change (`POST /internal/parents/sync`, réseau Docker interne, regroupé sur 1,5 s : le compte est disponible dans l'autre application en 2 à 3 secondes) ; contrôle complet toutes les 5 minutes ; bouton « 🔄 Synchroniser maintenant » dans la console. 1re synchronisation 20 s après le démarrage du portail : les comptes déjà existants sont recopiés.
+
+**Aucun mot de passe en clair** : seules les empreintes circulent, et chaque application sait vérifier le format de l'autre :
+- Fiche Sanitaire : `scrypt$N$r$p$sel$clé` (natif) + `pbkdf2-sha512$100000$sel$hex` / `pbkdf2a-sha256$50000$sel$hex` (venant de l'Infirmerie) ;
+- Fiche Infirmerie : PBKDF2 natif + `scrypt$…` (venant de la Fiche Sanitaire). Réponses secrètes : la règle de comparaison d'origine est conservée (minuscules ; sans accents pour celles créées dans l'Infirmerie).
+État de synchronisation : table `portail_parents_sync` (e-mail, SHA-256 de l'empreinte commune, présence de chaque côté) dans la base `portail` ; il sert à savoir **quel côté a changé**.
+Routes internes (secret `NDM_INTERNAL_SECRET`, bloquées par la passerelle depuis l'extérieur) : `GET /api/internal/parents` et `POST /api/internal/parents/import` (`mode` = `create` | `password`) dans les deux applications.
+
+Les écrans de connexion des deux applications indiquent aux familles que le compte est commun.
 
 Mot de passe administrateur du portail perdu :
 ```bash
@@ -326,14 +349,14 @@ Voir `.env.example` (reproduit dans la section Scripts) : chaque variable y est 
 
 ## 15. GitHub
 
-- Dépôt : `https://github.com/serviceinformatique-droid/ndm-sante` (privé, créé automatiquement au 1er push).
+- Dépôt : `https://github.com/serviceinformatique-droid/sitesante` (créé en privé automatiquement s'il n'existe pas).
 - 1re configuration : `bash /opt/ndm-sante/scripts/push-github.sh` (demande le jeton PAT classic, case `repo`), ou `GITHUB_TOKEN=ghp_xxx bash /opt/ndm-sante/scripts/push-github.sh`. Le jeton est enregistré dans `/root/.github-token`.
 - Ensuite, **chaque installation / mise à jour pousse automatiquement** le code + `README.md` + `docs/README-CODE-COMPLET.md`.
 - Jamais envoyés : `.env`, `donnees/`, `sauvegardes/`, `backups-installateur/`, `node_modules/`, `dist/`, l'installateur.
 - **Réinstaller depuis GitHub** sur un LXC neuf (Docker déjà installé ou non) :
   ```bash
   apt-get update && apt-get install -y git
-  git clone https://github.com/serviceinformatique-droid/ndm-sante.git /opt/ndm-sante   # demande le jeton (dépôt privé)
+  git clone https://github.com/serviceinformatique-droid/sitesante.git /opt/ndm-sante   # demande le jeton (dépôt privé)
   bash /opt/ndm-sante/scripts/installer.sh
   ```
 

@@ -11,6 +11,7 @@ import { ParentAuthCard } from './components/ParentAuthCard';
 import { AdminLoginCard } from './components/AdminLoginCard';
 import { generateFichePDF, generateCarnetPDF } from './utils/pdfGenerator';
 import { clearSession, SESSION_EXPIRED_EVENT } from './utils/apiAuth';
+import { setSchoolName, NOM_PAR_DEFAUT } from './utils/branding';
 import {
   User,
   HeartPulse,
@@ -41,7 +42,7 @@ export default function App() {
   const [fichePdfBlob, setFichePdfBlob] = useState<Blob | null>(null);
   const [carnetPdfBlob, setCarnetPdfBlob] = useState<Blob | null>(null);
   const [branding, setBranding] = useState<SchoolBranding>({
-    schoolName: 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE',
+    schoolName: NOM_PAR_DEFAUT,
     subTitle: "Sous-contrat d'Association avec l'État",
     logoDataUrl: '',
   });
@@ -53,6 +54,7 @@ export default function App() {
       .then((data) => {
         if (data.success && data.branding) {
           setBranding(data.branding);
+          setSchoolName(data.branding.schoolName);
         }
       })
       .catch(() => {});
@@ -511,7 +513,10 @@ export default function App() {
               }}
               adminUser={adminProfile}
               branding={branding}
-              onBrandingChange={(newB) => setBranding(newB)}
+              onBrandingChange={(newB) => {
+                setBranding(newB);
+                setSchoolName(newB.schoolName);
+              }}
             />
           )
         ) : (
@@ -671,7 +676,7 @@ export default function App() {
       <footer className="bg-white border-t border-slate-200 mt-12 py-6 text-center text-xs text-slate-500">
         <div className="max-w-5xl mx-auto px-4 space-y-1">
           <p className="font-semibold text-slate-700">
-            Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre • Service Médical & Infirmerie
+            {branding.schoolName} • Service Médical & Infirmerie
           </p>
           <p>
             Plateforme conforme RGPD • Archivage sécurisé • Fiches infirmerie & Carnets de vaccinations numérisés

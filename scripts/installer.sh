@@ -119,7 +119,9 @@ add_env PIECES_TAILLE_MAX_MO 30
 add_env AUTO_SYNC_MINUTES 15
 add_env SAUVEGARDE_RETENTION_JOURS 14
 add_env GITHUB_USER "serviceinformatique-droid"
-add_env GITHUB_REPO "ndm-sante"
+add_env GITHUB_REPO "sitesante"
+# Dépôt GitHub du projet : sitesante (remplace l'ancien nom par défaut ndm-sante)
+sed -i 's/^GITHUB_REPO=ndm-sante$/GITHUB_REPO=sitesante/' "$ENV_FILE"
 ok ".env prêt ($ENV_FILE, chmod 600)"
 
 # ------------------------------------------------------------------------------

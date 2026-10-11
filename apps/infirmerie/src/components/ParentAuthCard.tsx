@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSchoolName } from '../utils/branding';
 import { ParentProfile, SECRET_QUESTIONS } from '../types';
 import {
   Lock,
@@ -21,6 +22,7 @@ interface ParentAuthCardProps {
 }
 
 export function ParentAuthCard({ onSuccess, onSwitchToAdmin }: ParentAuthCardProps) {
+  const nomEtab = useSchoolName();
   const [tab, setTab] = useState<'login' | 'register' | 'forgot'>('login');
 
   // Login form
@@ -228,15 +230,18 @@ export function ParentAuthCard({ onSuccess, onSwitchToAdmin }: ParentAuthCardPro
           <div className="flex justify-center mb-3">
             <img
               src="/logo.svg"
-              alt="Logo Notre-Dame des Missions - Saint-Pierre"
+              alt={`Logo ${nomEtab}`}
               className="h-16 w-auto object-contain bg-white/10 p-2 rounded-xl backdrop-blur-xs border border-white/20"
             />
           </div>
           <h2 className="text-xl font-bold tracking-tight text-white uppercase">
-            Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+            {nomEtab}
           </h2>
           <p className="text-xs text-blue-200 mt-1">
             Service Infirmerie • Portail d'authentification des familles
+          </p>
+          <p className="text-[11px] text-blue-100/90 mt-2 bg-white/10 rounded-lg px-3 py-1.5 inline-block">
+            Un seul compte pour la Fiche Infirmerie et la Fiche Sanitaire : mêmes identifiant et mot de passe.
           </p>
 
           <div className="mt-4 inline-flex items-center gap-1.5 bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-[11px] px-3 py-1 rounded-full font-medium">

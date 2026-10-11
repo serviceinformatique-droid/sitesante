@@ -3304,7 +3304,7 @@ export class Database {
 
   // Nom de l'établissement (gestion centralisée)
   getEtablissement(): string {
-    return (this.data.etablissementNom || '').trim() || ETABLISSEMENT_DEFAUT;
+    return (this.data.etablissementNom || '').trim() || (process.env.ETABLISSEMENT_NOM || '').trim() || ETABLISSEMENT_DEFAUT;
   }
 
   /** Change le nom ; les voyages qui portaient l'ancien nom (ou le nom par défaut) suivent. Retourne le nb de voyages mis à jour. */

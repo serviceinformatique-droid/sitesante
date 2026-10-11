@@ -17,7 +17,7 @@ export interface RgpdSchoolConfig {
 }
 
 export const DEFAULT_RGPD_CONFIG: RgpdSchoolConfig = {
-  etablissement: 'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre',
+  etablissement: 'Ensemble Scolaire Notre-Dame des Missions',
   statut: "Établissement Catholique d'Enseignement sous contrat d'association avec l'État",
   adresse: '80 rue du Maréchal Foch, 94220 Charenton-le-Pont',
   reference: 'CDC-RGPD-INFIRMERIE-NDM-2026-V1',

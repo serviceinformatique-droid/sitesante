@@ -1,3 +1,4 @@
+import { getSchoolName } from '../utils/branding';
 import { useState } from 'react';
 import { SchoolBranding } from '../types';
 import { School, Upload, RotateCcw, Save, X, Check, Image as ImageIcon, AlertCircle } from 'lucide-react';
@@ -15,7 +16,7 @@ export function SchoolBrandingModal({
   branding,
   onSaved,
 }: SchoolBrandingModalProps) {
-  const [schoolName, setSchoolName] = useState(branding?.schoolName || 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE');
+  const [schoolName, setSchoolName] = useState(branding?.schoolName || getSchoolName());
   const [subTitle, setSubTitle] = useState(branding?.subTitle || "Sous-contrat d'Association avec l'État");
   const [logoDataUrl, setLogoDataUrl] = useState<string>(branding?.logoDataUrl || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -155,7 +156,7 @@ export function SchoolBrandingModal({
               type="text"
               value={schoolName}
               onChange={(e) => setSchoolName(e.target.value)}
-              placeholder="Ex: ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE"
+              placeholder="Nom officiel de l'établissement"
               className="w-full text-xs font-semibold px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
               required
             />

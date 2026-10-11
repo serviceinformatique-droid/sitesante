@@ -4,7 +4,7 @@
 #  Emplacement : /opt/ndm-sante/scripts/push-github.sh
 #  Usage (root) : bash /opt/ndm-sante/scripts/push-github.sh ["message du commit"]
 #
-#  Compte GitHub : serviceinformatique-droid   Dépôt : ndm-sante (privé, créé automatiquement)
+#  Compte GitHub : serviceinformatique-droid   Dépôt : sitesante (https://github.com/serviceinformatique-droid/sitesante ; créé en privé s'il n'existe pas)
 #  Jeton (Personal Access Token « classic », case « repo » cochée) :
 #    GitHub > Settings > Developer settings > Personal access tokens > Tokens (classic) > Generate new token
 #  - 1re fois : le script demande le jeton (saisie masquée) et l'enregistre dans /root/.github-token (chmod 600)
@@ -18,7 +18,7 @@ cd "$BASE_DIR"
 envget() { grep -E "^$1=" "$BASE_DIR/.env" 2>/dev/null | tail -n1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' || true; }
 
 GH_USER="$(envget GITHUB_USER)"; GH_USER="${GH_USER:-serviceinformatique-droid}"
-REPO_NAME="${GITHUB_REPO:-$(envget GITHUB_REPO)}"; REPO_NAME="${REPO_NAME:-ndm-sante}"
+REPO_NAME="${GITHUB_REPO:-$(envget GITHUB_REPO)}"; REPO_NAME="${REPO_NAME:-sitesante}"
 REPO_URL="https://github.com/${GH_USER}/${REPO_NAME}.git"
 MSG="${1:-Mise à jour NDM SANTÉ — $(date '+%Y-%m-%d %H:%M')}"
 TOKEN_FILE="/root/.github-token"

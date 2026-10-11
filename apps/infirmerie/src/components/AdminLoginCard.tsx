@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSchoolName } from '../utils/branding';
 import {
   Lock,
   Shield,
@@ -18,6 +19,7 @@ interface AdminLoginCardProps {
 }
 
 export function AdminLoginCard({ onSuccess, onBackToParent }: AdminLoginCardProps) {
+  const nomEtab = useSchoolName();
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -64,7 +66,7 @@ export function AdminLoginCard({ onSuccess, onBackToParent }: AdminLoginCardProp
           <div className="flex justify-center mb-3">
             <img
               src="/logo.svg"
-              alt="Logo Notre-Dame des Missions - Saint-Pierre"
+              alt={`Logo ${nomEtab}`}
               className="h-16 w-auto object-contain bg-white/10 p-2 rounded-xl backdrop-blur-xs border border-white/20"
             />
           </div>
@@ -76,7 +78,7 @@ export function AdminLoginCard({ onSuccess, onBackToParent }: AdminLoginCardProp
             Accès Sécurisé Administration
           </h2>
           <p className="text-xs text-slate-300 mt-1">
-            Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+            {nomEtab}
           </p>
         </div>
 

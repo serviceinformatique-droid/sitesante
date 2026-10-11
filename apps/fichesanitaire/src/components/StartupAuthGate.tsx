@@ -418,6 +418,9 @@ export const StartupAuthGate: React.FC<StartupAuthGateProps> = ({
 
                 {/* Primary option to create account for new parents */}
                 <div className="pt-3 border-t border-slate-100 text-center">
+                  <p className="text-[11px] text-blue-800 bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5 mb-2">
+                    Un seul compte pour la Fiche Sanitaire et la Fiche Infirmerie : si vous en avez déjà un, connectez-vous avec la même adresse e-mail et le même mot de passe.
+                  </p>
                   <p className="text-xs text-slate-600 mb-2">
                     Première fois sur le portail sanitaire ?
                   </p>

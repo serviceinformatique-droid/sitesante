@@ -26,15 +26,21 @@ import {
   RgpdSchoolConfig,
   generateRgpdAttestationPDF
 } from '../utils/rgpdPdfGenerator';
+import { useSchoolName } from '../utils/branding';
 
 export function RgpdComplianceView() {
+  // Nom de l'établissement : toujours celui de la gestion centralisée (identité de l'établissement)
+  const nomEtab = useSchoolName();
   const [activeSection, setActiveSection] = useState<
     'synthese' | 'registre' | 'securite' | 'droits' | 'full_text' | 'edit' | 'lxc_guide'
   >('synthese');
   const [cryptoStatus, setCryptoStatus] = useState<any>(null);
 
   // Dynamic RGPD Config & Markdown
-  const [config, setConfig] = useState<RgpdSchoolConfig>(DEFAULT_RGPD_CONFIG);
+  const [config, setConfig] = useState<RgpdSchoolConfig>({ ...DEFAULT_RGPD_CONFIG, etablissement: nomEtab });
+  useEffect(() => {
+    setConfig((prev) => (prev.etablissement === nomEtab ? prev : { ...prev, etablissement: nomEtab }));
+  }, [nomEtab]);
   const [markdownText, setMarkdownText] = useState<string>('');
   const [initialLoading, setInitialLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -62,7 +68,7 @@ export function RgpdComplianceView() {
         if (data.success) {
           if (data.markdown) setMarkdownText(data.markdown);
           if (data.config) {
-            setConfig((prev) => ({ ...prev, ...data.config }));
+            setConfig((prev) => ({ ...prev, ...data.config, etablissement: nomEtab }));
           }
         }
       })
@@ -133,7 +139,7 @@ export function RgpdComplianceView() {
       const data = await res.json();
       if (data.success) {
         setMarkdownText(data.markdown);
-        setConfig(DEFAULT_RGPD_CONFIG);
+        setConfig({ ...DEFAULT_RGPD_CONFIG, etablissement: nomEtab });
         setSaveMessage({ type: 'success', text: 'Modèle officiel d’origine rétabli avec succès.' });
         setTimeout(() => setSaveMessage(null), 4000);
       }
@@ -900,9 +906,11 @@ export function RgpdComplianceView() {
                 <input
                   type="text"
                   value={config.etablissement}
-                  onChange={(e) => setConfig({ ...config, etablissement: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-blue-900 focus:outline-none"
+                  readOnly
+                  title="Géré par la gestion centralisée du portail NDM (ou Identité & Logo)"
+                  className="w-full px-3 py-2 border border-slate-200 bg-slate-50 text-slate-600 rounded-xl font-medium focus:outline-none"
                 />
+                <p className="text-[10px] text-slate-500 mt-1">Modifiable dans Portail &gt; Admin &gt; Gestion centralisée (ou « Identité &amp; Logo »).</p>
               </div>
 
               <div>

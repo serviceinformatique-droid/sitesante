@@ -2,7 +2,7 @@
 
 **Ensemble Scolaire Notre-Dame des Missions** — plateforme fusionnée (4 projets) installée sur un **LXC Proxmox Debian 12** avec **Docker**, derrière **Nginx Proxy Manager**.
 
-> Document **généré automatiquement** par `scripts/generer-readme.sh` le **11/10/2026 à 18:32** — version **1.2.0** — serveur `portailsante`.
+> Document **généré automatiquement** par `scripts/generer-readme.sh` le **11/10/2026 à 18:34** — version **1.3.0** — serveur `portailsante`.
 > Il est **auto-suffisant** : état réel de l'installation, documentation complète, toutes les commandes et **tous les scripts** (extraction ci-dessous).
 > À fournir tel quel au début d'une **nouvelle conversation Claude** pour reprendre le projet. Code source complet : `/opt/readme/README-CODE-COMPLET.md` (et `docs/README-CODE-COMPLET.md` sur GitHub).
 
@@ -26,7 +26,7 @@ Installation / mise à jour : déposer `installer-ndm-sante.sh` dans **`/root/`*
 - Répondre en **français**.
 - Livrer des **scripts complets** (`cat` / `sh`), jamais d'extraits ni de modifications manuelles à faire à la main.
 - Indiquer **systématiquement** le répertoire où déposer chaque fichier avec **FileZilla** (SFTP, utilisateur `root`, transfert en mode **binaire**) et la commande exacte pour l'exécuter.
-- Après **toute installation ou mise à jour** : régénérer ce README dans `/opt/readme/README.md` (extrêmement détaillé, auto-suffisant, contenant tous les scripts) **et pousser le projet sur GitHub** (`serviceinformatique-droid/ndm-sante`). C'est fait automatiquement par `scripts/installer.sh`.
+- Après **toute installation ou mise à jour** : régénérer ce README dans `/opt/readme/README.md` (extrêmement détaillé, auto-suffisant, contenant tous les scripts) **et pousser le projet sur GitHub** (`serviceinformatique-droid/sitesante`). C'est fait automatiquement par `scripts/installer.sh`.
 - Toutes les applications doivent **fonctionner en iframe** (aucun `X-Frame-Options`, CSP `frame-ancestors` réglable par `FRAME_ANCESTORS`).
 - **100 % serveur, rien en cache navigateur** : en-têtes `Cache-Control: no-store` imposés par la passerelle sur toutes les réponses, ETag / Last-Modified supprimés.
 - **100 % responsive** (téléphone, tablette, ordinateur).
@@ -89,7 +89,7 @@ Les **ports d'origine** de chaque projet sont conservés (8080, 8099, 3001, 3000
 │   ├── installer.sh             # installation / mise à jour idempotente (appelé par l'installateur)
 │   ├── ndm.sh                   # outil d'exploitation (etat, logs, sauvegarde, restaurer, push…)
 │   ├── generer-readme.sh        # génère /opt/readme/README.md + README-CODE-COMPLET.md
-│   ├── push-github.sh           # push vers github.com/serviceinformatique-droid/ndm-sante
+│   ├── push-github.sh           # push vers github.com/serviceinformatique-droid/sitesante
 │   └── fabriquer-installateur.sh# refabrique installer-ndm-sante.sh depuis le code installé
 ├── installer/{header,footer}.sh # en-tête / pied de l'installateur tout-en-un
 ├── docs/
@@ -204,8 +204,8 @@ Tous les mots de passe initiaux sont générés aléatoirement à la 1re install
 Accès : se connecter à `/admin` du portail, bouton **🔐 Gestion centralisée**.
 
 **Nom de l'établissement** : la page affiche le nom actuellement utilisé par chaque application (pastille « à jour » / « différent » / « injoignable »). « Appliquer partout » enregistre le nom dans le portail (`portail_config.etablissement`) et le pousse à :
-- Fiche Sanitaire : clé `cerfa_establishment_name_v1` (fiches, PDF, liste des inscrits, e-mails de relance `{etablissement}`) ;
-- Fiche Infirmerie : `branding.schoolName` (en-tête, PDF A4 ; logo et sous-titre conservés) ;
+- Fiche Sanitaire : clé `cerfa_establishment_name_v1` (fiches, PDF, liste des inscrits, e-mails de relance `{etablissement}`, message d'accueil des nouveaux parents `{etablissement}`) ;
+- Fiche Infirmerie : `branding.schoolName` — **tous** les textes (en-têtes, écrans de connexion parent et personnel, tableau de bord, texte d'autorisation parentale, écran de confirmation, aperçu et PDF A4 de la fiche, titre de l'onglet, cahier des charges RGPD via la variable `{{ETABLISSEMENT}}`, attestation RGPD) ; logo et sous-titre conservés ;
 - Suivi des Voyages : réglage `etablissementNom` (en-tête, pied de page, valeur par défaut des nouveaux voyages) et champ `etablissement` des voyages existants qui portaient l'ancien nom ou le nom par défaut ;
 - Portail : titre « Portail de santé – nom » si la case est cochée.
 Le nom initial vient de `ETABLISSEMENT_NOM` dans `.env`.
@@ -227,6 +227,29 @@ Le nom initial vient de `ETABLISSEMENT_NOM` dans `.env`.
 La **passerelle nginx supprime ces deux en-têtes** de toute requête venant de l'extérieur (`proxy_set_header X-Ndm-Internal ""`) : seul le portail, à l'intérieur du réseau Docker, peut les utiliser. Comparaison à temps constant, secret de 24 caractères minimum exigé.
 
 **Sécurité de l'administration du portail** : 5 échecs de connexion par adresse IP ⇒ blocage 15 min ; session régénérée à la connexion (anti-fixation). La console centrale donne la main sur tous les comptes : choisir un mot de passe administrateur du portail long et unique.
+
+### 8ter. Comptes parents communs Fiche Sanitaire ⇄ Fiche Infirmerie (v1.3.0)
+
+**Principe : un parent = une adresse e-mail = un compte valable dans les deux applications** (mêmes identifiant, mot de passe, question et réponse secrètes).
+
+| Événement | Effet automatique |
+|---|---|
+| Inscription dans la Fiche Sanitaire | compte créé dans la Fiche Infirmerie (nom, prénom, téléphone, empreintes) |
+| Inscription dans la Fiche Infirmerie | compte créé dans la Fiche Sanitaire (+ message d'accueil de la messagerie) |
+| Changement de mot de passe (par le parent, « mot de passe oublié », console centrale, administration de la Fiche Sanitaire) | recopié dans l'autre application ; sessions ouvertes du compte fermées de l'autre côté |
+| Compte supprimé d'un côté après synchronisation | **non recréé** (la suppression est respectée ; l'autre compte est conservé) |
+| Parent inscrit séparément dans les deux applications avec des mots de passe différents (avant la v1.3.0) | **conflit** affiché dans la console centrale : bouton « Garder celui de la Fiche Sanitaire / de l'Infirmerie », ou nouveau mot de passe défini depuis la console (appliqué aux deux) |
+| Adresse déjà utilisée par un compte du personnel de la Fiche Sanitaire | non synchronisé (signalé) |
+
+**Déclenchement** : chaque application prévient le portail dès qu'un compte change (`POST /internal/parents/sync`, réseau Docker interne, regroupé sur 1,5 s : le compte est disponible dans l'autre application en 2 à 3 secondes) ; contrôle complet toutes les 5 minutes ; bouton « 🔄 Synchroniser maintenant » dans la console. 1re synchronisation 20 s après le démarrage du portail : les comptes déjà existants sont recopiés.
+
+**Aucun mot de passe en clair** : seules les empreintes circulent, et chaque application sait vérifier le format de l'autre :
+- Fiche Sanitaire : `scrypt$N$r$p$sel$clé` (natif) + `pbkdf2-sha512$100000$sel$hex` / `pbkdf2a-sha256$50000$sel$hex` (venant de l'Infirmerie) ;
+- Fiche Infirmerie : PBKDF2 natif + `scrypt$…` (venant de la Fiche Sanitaire). Réponses secrètes : la règle de comparaison d'origine est conservée (minuscules ; sans accents pour celles créées dans l'Infirmerie).
+État de synchronisation : table `portail_parents_sync` (e-mail, SHA-256 de l'empreinte commune, présence de chaque côté) dans la base `portail` ; il sert à savoir **quel côté a changé**.
+Routes internes (secret `NDM_INTERNAL_SECRET`, bloquées par la passerelle depuis l'extérieur) : `GET /api/internal/parents` et `POST /api/internal/parents/import` (`mode` = `create` | `password`) dans les deux applications.
+
+Les écrans de connexion des deux applications indiquent aux familles que le compte est commun.
 
 Mot de passe administrateur du portail perdu :
 ```bash
@@ -349,14 +372,14 @@ Voir `.env.example` (reproduit dans la section Scripts) : chaque variable y est 
 
 ## 15. GitHub
 
-- Dépôt : `https://github.com/serviceinformatique-droid/ndm-sante` (privé, créé automatiquement au 1er push).
+- Dépôt : `https://github.com/serviceinformatique-droid/sitesante` (créé en privé automatiquement s'il n'existe pas).
 - 1re configuration : `bash /opt/ndm-sante/scripts/push-github.sh` (demande le jeton PAT classic, case `repo`), ou `GITHUB_TOKEN=ghp_xxx bash /opt/ndm-sante/scripts/push-github.sh`. Le jeton est enregistré dans `/root/.github-token`.
 - Ensuite, **chaque installation / mise à jour pousse automatiquement** le code + `README.md` + `docs/README-CODE-COMPLET.md`.
 - Jamais envoyés : `.env`, `donnees/`, `sauvegardes/`, `backups-installateur/`, `node_modules/`, `dist/`, l'installateur.
 - **Réinstaller depuis GitHub** sur un LXC neuf (Docker déjà installé ou non) :
   ```bash
   apt-get update && apt-get install -y git
-  git clone https://github.com/serviceinformatique-droid/ndm-sante.git /opt/ndm-sante   # demande le jeton (dépôt privé)
+  git clone https://github.com/serviceinformatique-droid/sitesante.git /opt/ndm-sante   # demande le jeton (dépôt privé)
   bash /opt/ndm-sante/scripts/installer.sh
   ```
 
@@ -392,7 +415,7 @@ Voir `.env.example` (reproduit dans la section Scripts) : chaque variable y est 
 - La protection des menus du portail n'est qu'un verrou d'affichage : les URL restent accessibles directement. Chaque application assure sa propre authentification.
 - Les données de santé ne quittent jamais le serveur (exclues de git, sauvegardes en chmod 600).
 
-## A. État de l'installation (au 11/10/2026 à 18:32)
+## A. État de l'installation (au 11/10/2026 à 18:34)
 
 ### A.1 Système
 ```text
@@ -407,13 +430,13 @@ Mémoire     : 9.4Gi / 15Gi
 
 ### A.2 Conteneurs
 ```text
-NAME                 IMAGE                             COMMAND                  SERVICE          CREATED             STATUS                       PORTS
-ndm_fichesanitaire   ndm-sante/fichesanitaire:latest   "docker-entrypoint.s…"   fichesanitaire   33 minutes ago      Up 33 minutes (healthy)      3000/tcp
-ndm_infirmerie       ndm-sante/infirmerie:latest       "/usr/local/bin/dock…"   infirmerie       33 minutes ago      Up 33 minutes (healthy)      3001/tcp
-ndm_passerelle       nginx:1.27-alpine                 "/docker-entrypoint.…"   passerelle       About an hour ago   Up About an hour             0.0.0.0:3000-3001->3000-3001/tcp, [::]:3000-3001->3000-3001/tcp, 0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp, 80/tcp, 0.0.0.0:8099->8099/tcp, [::]:8099->8099/tcp
-ndm_portail          ndm-sante/portail:latest          "docker-entrypoint.s…"   portail          33 minutes ago      Up 33 minutes (healthy)      3020/tcp
-ndm_postgres         postgres:16-alpine                "docker-entrypoint.s…"   postgres         About an hour ago   Up About an hour (healthy)   5432/tcp
-ndm_voyages          ndm-sante/voyages:latest          "docker-entrypoint.s…"   voyages          33 minutes ago      Up 33 minutes (healthy)      3000/tcp
+NAME                 IMAGE                             COMMAND                  SERVICE          CREATED             STATUS                            PORTS
+ndm_fichesanitaire   ndm-sante/fichesanitaire:latest   "docker-entrypoint.s…"   fichesanitaire   16 seconds ago      Up 4 seconds (health: starting)   3000/tcp
+ndm_infirmerie       ndm-sante/infirmerie:latest       "/usr/local/bin/dock…"   infirmerie       16 seconds ago      Up 5 seconds (healthy)            3001/tcp
+ndm_passerelle       nginx:1.27-alpine                 "/docker-entrypoint.…"   passerelle       About an hour ago   Up About an hour                  0.0.0.0:3000-3001->3000-3001/tcp, [::]:3000-3001->3000-3001/tcp, 0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp, 80/tcp, 0.0.0.0:8099->8099/tcp, [::]:8099->8099/tcp
+ndm_portail          ndm-sante/portail:latest          "docker-entrypoint.s…"   portail          16 seconds ago      Up 5 seconds (health: starting)   3020/tcp
+ndm_postgres         postgres:16-alpine                "docker-entrypoint.s…"   postgres         About an hour ago   Up About an hour (healthy)        5432/tcp
+ndm_voyages          ndm-sante/voyages:latest          "docker-entrypoint.s…"   voyages          16 seconds ago      Up 5 seconds (healthy)            3000/tcp
 ```
 
 ### A.3 Tests de santé
@@ -426,10 +449,10 @@ OK      Suivi Voyages     http://127.0.0.1:3000/api/health
 
 ### A.4 Images Docker
 ```text
-ndm-sante/voyages:latest  743MB  33 minutes ago
-ndm-sante/infirmerie:latest  1GB  33 minutes ago
-ndm-sante/portail:latest  344MB  34 minutes ago
-ndm-sante/fichesanitaire:latest  217MB  About an hour ago
+ndm-sante/fichesanitaire:latest  217MB  17 seconds ago
+ndm-sante/voyages:latest  743MB  20 seconds ago
+ndm-sante/infirmerie:latest  1GB  35 seconds ago
+ndm-sante/portail:latest  344MB  About a minute ago
 postgres:16-alpine  420MB  3 weeks ago
 nginx:1.27-alpine  74.5MB  18 months ago
 ```
@@ -475,7 +498,7 @@ PIECES_TAILLE_MAX_MO=30
 AUTO_SYNC_MINUTES=15
 SAUVEGARDE_RETENTION_JOURS=14
 GITHUB_USER=serviceinformatique-droid
-GITHUB_REPO=ndm-sante
+GITHUB_REPO=sitesante
 NDM_INTERNAL_SECRET=******** (masqué)
 ETABLISSEMENT_NOM=Ensemble Scolaire Notre-Dame des Missions
 ```
@@ -491,11 +514,13 @@ Volume PostgreSQL : /var/lib/docker/volumes/ndm-sante_ndm_pgdata/_data
 ### A.7 Dernières sauvegardes
 ```text
 -rw------- 1 root root 14K Oct 11 17:57 sauvegardes/ndm-20261011-1757.tgz
+-rw------- 1 root root 16K Oct 11 18:33 sauvegardes/ndm-20261011-1833.tgz
 ```
 
 ### A.8 Git
 ```text
-Pas encore de dépôt git (1er push : bash /opt/ndm-sante/scripts/push-github.sh)
+Dépôt : https://github.com/serviceinformatique-droid/sitesante.git
+5448e09 Mise à jour NDM SANTÉ v1.2.0 — 2026-10-11 18:31
 ```
 
 ## B. Scripts et fichiers d'infrastructure (contenu complet)
@@ -636,7 +661,9 @@ add_env PIECES_TAILLE_MAX_MO 30
 add_env AUTO_SYNC_MINUTES 15
 add_env SAUVEGARDE_RETENTION_JOURS 14
 add_env GITHUB_USER "serviceinformatique-droid"
-add_env GITHUB_REPO "ndm-sante"
+add_env GITHUB_REPO "sitesante"
+# Dépôt GitHub du projet : sitesante (remplace l'ancien nom par défaut ndm-sante)
+sed -i 's/^GITHUB_REPO=ndm-sante$/GITHUB_REPO=sitesante/' "$ENV_FILE"
 ok ".env prêt ($ENV_FILE, chmod 600)"
 
 # ------------------------------------------------------------------------------
@@ -892,7 +919,7 @@ esac
 #  Emplacement : /opt/ndm-sante/scripts/push-github.sh
 #  Usage (root) : bash /opt/ndm-sante/scripts/push-github.sh ["message du commit"]
 #
-#  Compte GitHub : serviceinformatique-droid   Dépôt : ndm-sante (privé, créé automatiquement)
+#  Compte GitHub : serviceinformatique-droid   Dépôt : sitesante (https://github.com/serviceinformatique-droid/sitesante ; créé en privé s'il n'existe pas)
 #  Jeton (Personal Access Token « classic », case « repo » cochée) :
 #    GitHub > Settings > Developer settings > Personal access tokens > Tokens (classic) > Generate new token
 #  - 1re fois : le script demande le jeton (saisie masquée) et l'enregistre dans /root/.github-token (chmod 600)
@@ -906,7 +933,7 @@ cd "$BASE_DIR"
 envget() { grep -E "^$1=" "$BASE_DIR/.env" 2>/dev/null | tail -n1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' || true; }
 
 GH_USER="$(envget GITHUB_USER)"; GH_USER="${GH_USER:-serviceinformatique-droid}"
-REPO_NAME="${GITHUB_REPO:-$(envget GITHUB_REPO)}"; REPO_NAME="${REPO_NAME:-ndm-sante}"
+REPO_NAME="${GITHUB_REPO:-$(envget GITHUB_REPO)}"; REPO_NAME="${REPO_NAME:-sitesante}"
 REPO_URL="https://github.com/${GH_USER}/${REPO_NAME}.git"
 MSG="${1:-Mise à jour NDM SANTÉ — $(date '+%Y-%m-%d %H:%M')}"
 TOKEN_FILE="/root/.github-token"
@@ -1119,7 +1146,7 @@ for f in scripts/installer.sh scripts/ndm.sh scripts/push-github.sh scripts/gene
          installer/header.sh installer/footer.sh docker-compose.yml .env.example .gitignore VERSION \
          passerelle/templates/default.conf.template passerelle/ndm-proxy.conf postgres-init/01-bases.sh \
          apps/portail/Dockerfile apps/fichesanitaire/Dockerfile apps/infirmerie/Dockerfile apps/infirmerie/docker-entrypoint.sh \
-         apps/voyages/Dockerfile apps/portail/server.js apps/portail/centrale.js apps/portail/package.json \
+         apps/voyages/Dockerfile apps/portail/server.js apps/portail/centrale.js apps/portail/parents.js apps/portail/package.json \
          apps/portail/views/portail.ejs apps/portail/views/admin/index.ejs apps/portail/views/admin/centrale.ejs apps/portail/views/admin/login.ejs apps/portail/views/login.ejs; do
   [ -f "$f" ] || continue
   echo "### \`$f\`"
@@ -1393,6 +1420,7 @@ services:
       TZ: ${TZ:-Europe/Paris}
       INFIRMERIE_STAFF_PASSWORD: ${INFIRMERIE_STAFF_PASSWORD}
       NDM_INTERNAL_SECRET: ${NDM_INTERNAL_SECRET}
+      ETABLISSEMENT_NOM: ${ETABLISSEMENT_NOM:-Ensemble Scolaire Notre-Dame des Missions}
       SESSION_TTL_HOURS: 8
       NEXTCLOUD_URL: ${NEXTCLOUD_URL:-}
       NEXTCLOUD_USERNAME: ${NEXTCLOUD_USERNAME:-}
@@ -1414,6 +1442,7 @@ services:
       TZ: ${TZ:-Europe/Paris}
       ADMIN_PASSWORD: ${VOYAGES_ADMIN_PASSWORD}
       NDM_INTERNAL_SECRET: ${NDM_INTERNAL_SECRET}
+      ETABLISSEMENT_NOM: ${ETABLISSEMENT_NOM:-Ensemble Scolaire Notre-Dame des Missions}
       CONSULTATION_PASSWORD: ${VOYAGES_CONSULTATION_PASSWORD:-}
       SESSION_SECRET: ${SESSION_SECRET}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
@@ -1545,7 +1574,7 @@ SAUVEGARDE_RETENTION_JOURS=14
 
 # --- GitHub (le jeton n'est JAMAIS ici : il est dans /root/.github-token) ------
 GITHUB_USER=serviceinformatique-droid
-GITHUB_REPO=ndm-sante
+GITHUB_REPO=sitesante
 ```
 <!-- SCRIPT-END:.env.example -->
 
@@ -1572,7 +1601,7 @@ dist/
 
 <!-- SCRIPT-START:VERSION -->
 ```text
-1.2.0
+1.3.0
 ```
 <!-- SCRIPT-END:VERSION -->
 
@@ -1854,6 +1883,7 @@ const bcrypt  = require('bcryptjs');
 const path    = require('path');
 const { Pool } = require('pg');
 const centrale = require('./centrale');
+const parents = require('./parents');
 
 console.log('[portail] build ndm-sante-portail + centrale-20261011');
 
@@ -1968,6 +1998,8 @@ async function migrate() {
     await ins(null, 'Fiche Infirmerie', '🏥', SYSTEM_URLS.infirmerie, 2, false, 'infirmerie');
     console.log('[portail] Menus par défaut créés');
   }
+
+  await parents.migrate(db);
 
   // Les menus système suivent toujours les URL du fichier .env
   for (const [code, url] of Object.entries(SYSTEM_URLS)) {
@@ -2185,7 +2217,7 @@ app.post('/admin/config', requireAdmin, wrap(async (req, res) => {
 app.get('/admin/centrale', requireAdmin, wrap(async (req, res) => {
   const etat = await centrale.etatComplet(db);
   const journal = await db.query('SELECT date, ip, action FROM portail_audit ORDER BY date DESC LIMIT 60');
-  res.render('admin/centrale', { ...etat, journal: journal.rows, apps: centrale.APPS, minLen: centrale.MIN_LEN, msg: req.query.msg, err: req.query.err });
+  res.render('admin/centrale', { ...etat, parentsSync: parents.etat(), journal: journal.rows, apps: centrale.APPS, minLen: centrale.MIN_LEN, msg: req.query.msg, err: req.query.err });
 }));
 
 app.post('/admin/centrale/etablissement', requireAdmin, wrap(async (req, res) => {
@@ -2204,14 +2236,64 @@ app.post('/admin/centrale/etablissement', requireAdmin, wrap(async (req, res) =>
 app.post('/admin/centrale/mot-de-passe', requireAdmin, async (req, res) => {
   const { app: appKey, type, id, libelle } = req.body || {};
   try {
-    const message = await centrale.changerMotDePasse(db, req.body || {});
+    const r = await centrale.changerMotDePasse(db, req.body || {});
+    let message = typeof r === 'string' ? r : r.message;
     await audit(req, `Mot de passe redéfini — ${appKey} / ${type} : ${String(libelle || id || '').slice(0, 200)}`);
+    // Compte parent commun : le nouveau mot de passe est aussitôt recopié dans l'autre application
+    if (r && typeof r === 'object' && r.parentEmail) {
+      try {
+        const rap = await parents.synchroniser(db, { email: r.parentEmail, source: r.source });
+        if (rap.alignesFs.includes(r.parentEmail) || rap.alignesInf.includes(r.parentEmail)) {
+          message += ' Compte commun : mot de passe également appliqué à ' + (r.source === 'infirmerie' ? 'la Fiche Sanitaire.' : 'la Fiche Infirmerie.');
+        }
+      } catch (e) {
+        message += ` (Synchronisation du compte commun en attente : ${e.message})`;
+      }
+    }
     res.json({ ok: true, message });
   } catch (e) {
     await audit(req, `ÉCHEC changement de mot de passe — ${appKey} / ${type} : ${String(libelle || id || '').slice(0, 200)} (${e.message})`);
     res.status(400).json({ ok: false, error: e.message });
   }
 });
+
+// --- Comptes parents communs Fiche Sanitaire <-> Fiche Infirmerie ---
+function appelInterne(req) {
+  const s = process.env.NDM_INTERNAL_SECRET || '';
+  const g = String(req.headers['x-ndm-internal'] || '');
+  if (s.length < 24 || !g) return false;
+  const a = require('crypto').createHash('sha256').update(s).digest();
+  const b = require('crypto').createHash('sha256').update(g).digest();
+  return require('crypto').timingSafeEqual(a, b);
+}
+// Signal envoyé par les applications à chaque modification de comptes (réseau Docker interne uniquement)
+app.post('/internal/parents/sync', (req, res) => {
+  if (!appelInterne(req)) return res.status(403).json({ ok: false });
+  parents.synchroniser(db).catch((e) => console.error('[parents-communs]', e.message));
+  res.json({ ok: true });
+});
+
+app.post('/admin/centrale/parents/sync', requireAdmin, wrap(async (req, res) => {
+  try {
+    const r = await parents.synchroniser(db);
+    await audit(req, `Synchronisation manuelle des comptes parents (${r.creesFs.length + r.creesInf.length} créé(s), ${r.alignesFs.length + r.alignesInf.length} aligné(s), ${r.conflits.length} conflit(s))`);
+    res.redirect('/admin/centrale?msg=' + encodeURIComponent(`Comptes parents synchronisés : ${r.creesInf.length} créé(s) dans l'Infirmerie, ${r.creesFs.length} dans la Fiche Sanitaire, ${r.alignesFs.length + r.alignesInf.length} mot(s) de passe aligné(s), ${r.conflits.length} conflit(s).`) + '#parents');
+  } catch (e) {
+    res.redirect('/admin/centrale?err=' + encodeURIComponent('Synchronisation impossible : ' + e.message) + '#parents');
+  }
+}));
+
+app.post('/admin/centrale/parents/aligner', requireAdmin, wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const source = req.body.source === 'infirmerie' ? 'infirmerie' : 'fichesanitaire';
+  try {
+    await parents.synchroniser(db, { email, source });
+    await audit(req, `Compte parent commun ${email} aligné sur le mot de passe de ${source === 'infirmerie' ? 'la Fiche Infirmerie' : 'la Fiche Sanitaire'}`);
+    res.redirect('/admin/centrale?msg=' + encodeURIComponent(`Compte ${email} : le mot de passe ${source === 'infirmerie' ? 'de la Fiche Infirmerie' : 'de la Fiche Sanitaire'} est maintenant valable dans les deux applications.`) + '#parents');
+  } catch (e) {
+    res.redirect('/admin/centrale?err=' + encodeURIComponent(e.message) + '#parents');
+  }
+}));
 
 app.use((err, req, res, next) => {
   console.error('[portail] Erreur :', err);
@@ -2230,6 +2312,7 @@ app.use((err, req, res, next) => {
   }
   const port = process.env.PORT || 3020;
   app.listen(port, '0.0.0.0', () => console.log(`✅ Portail NDM démarré sur le port ${port}`));
+  parents.demarrer(db);
 })();
 ```
 <!-- SCRIPT-END:apps/portail/server.js -->
@@ -2393,7 +2476,7 @@ async function changerMotDePasse(db, { app, type, id, password }) {
       const u = ((data && data[K_USERS]) || []).find((x) => x && x.id === id);
       if (!u) throw new Error('Compte introuvable dans la Fiche Sanitaire.');
       await call('fichesanitaire', 'POST', '/api/users/upsert', { user: { ...u, password: pwd } });
-      return `Mot de passe de ${u.name || u.email} (${u.email}) modifié dans la Fiche Sanitaire.`;
+      return { message: `Mot de passe de ${u.name || u.email} (${u.email}) modifié dans la Fiche Sanitaire.`, parentEmail: u.role === 'parent' ? String(u.email || '').trim().toLowerCase() : null, source: 'fichesanitaire' };
     }
     if (type === 'trip') {
       const trips = (data && data[K_TRIPS]) || [];
@@ -2407,7 +2490,7 @@ async function changerMotDePasse(db, { app, type, id, password }) {
 
   if (app === 'infirmerie' && (type === 'staff' || type === 'parent')) {
     const r = await call('infirmerie', 'POST', '/api/internal/set-password', { kind: type, id, password: pwd });
-    return r.message || 'Mot de passe modifié dans la Fiche Infirmerie.';
+    return { message: r.message || 'Mot de passe modifié dans la Fiche Infirmerie.', parentEmail: type === 'parent' ? r.email || null : null, source: 'infirmerie' };
   }
 
   if (app === 'voyages') {
@@ -2430,6 +2513,175 @@ async function changerMotDePasse(db, { app, type, id, password }) {
 module.exports = { APPS, MIN_LEN, etatComplet, changerEtablissement, changerMotDePasse };
 ```
 <!-- SCRIPT-END:apps/portail/centrale.js -->
+
+### `apps/portail/parents.js`
+
+<!-- SCRIPT-START:apps/portail/parents.js -->
+```javascript
+// ============================================================================
+//  Portail NDM — COMPTES PARENTS COMMUNS Fiche Sanitaire <-> Fiche Infirmerie
+//  (build parents-communs-20261011)
+//
+//  Un parent = UNE adresse e-mail = UN compte valable dans les deux applications.
+//  - Compte présent d'un seul côté                 -> créé de l'autre côté (identité + empreintes)
+//  - Mot de passe changé d'un côté                 -> recopié de l'autre côté
+//  - Mots de passe différents des deux côtés sans
+//    historique commun (comptes créés séparément)  -> CONFLIT signalé dans la console centrale
+//  - Compte supprimé d'un côté après synchronisation -> NON recréé (suppression respectée)
+//  Aucune donnée en clair : seules les empreintes (formats compris par les deux applications) circulent,
+//  sur le réseau Docker interne. État de synchronisation : table portail_parents_sync (empreinte SHA-256
+//  de l'empreinte commune, jamais l'empreinte elle-même).
+//  Déclenchement : signal des applications à chaque modification de comptes (1,5 s), toutes les 5 min,
+//  bouton « Synchroniser maintenant » de la console centrale.
+// ============================================================================
+const crypto = require('crypto');
+
+const SECRET = process.env.NDM_INTERNAL_SECRET || '';
+const FS_URL = process.env.INTERNAL_URL_FICHESANITAIRE || 'http://fichesanitaire:3000';
+const INF_URL = process.env.INTERNAL_URL_INFIRMERIE || 'http://infirmerie:3001';
+
+const fp = (h) => (h ? crypto.createHash('sha256').update(String(h)).digest('hex') : null);
+
+async function api(base, header, method, path, body) {
+  const res = await fetch(base + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', [header]: SECRET },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(15000),
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* vide */ }
+  if (!res.ok) throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
+  return data;
+}
+const fsApi = (m, p, b) => api(FS_URL, 'X-Local-Tool', m, p, b);
+const infApi = (m, p, b) => api(INF_URL, 'X-Ndm-Internal', m, p, b);
+
+async function migrate(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS portail_parents_sync (
+      email       VARCHAR(200) PRIMARY KEY,
+      last_fp     VARCHAR(64),
+      in_fs       BOOLEAN NOT NULL DEFAULT FALSE,
+      in_inf      BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+let enCours = null;
+let relancer = false;
+let dernier = { date: null, rapport: null, erreur: null };
+
+/**
+ * Synchronise les comptes parents. prefer = { email, source: 'fichesanitaire'|'infirmerie' } force
+ * l'alignement d'un compte en conflit sur l'application choisie.
+ */
+async function synchroniser(db, prefer) {
+  if (enCours) {
+    if (!prefer) { relancer = true; return enCours; }
+    await enCours.catch(() => {});
+  }
+  enCours = (async () => {
+    const rapport = { creesFs: [], creesInf: [], alignesFs: [], alignesInf: [], conflits: [], ignores: [], communs: 0, synchronises: 0, totalFs: 0, totalInf: 0 };
+    try {
+      if (!SECRET || SECRET.length < 24) throw new Error('NDM_INTERNAL_SECRET absent du .env');
+      const [fsRes, infRes, st] = await Promise.all([
+        fsApi('GET', '/api/internal/parents'),
+        infApi('GET', '/api/internal/parents'),
+        db.query('SELECT * FROM portail_parents_sync'),
+      ]);
+      const fsMap = new Map((fsRes.parents || []).filter((p) => p.email).map((p) => [p.email, p]));
+      const infMap = new Map((infRes.parents || []).filter((p) => p.email).map((p) => [p.email, p]));
+      const etat = new Map(st.rows.map((r) => [r.email, r]));
+      rapport.totalFs = fsMap.size;
+      rapport.totalInf = infMap.size;
+
+      const save = (email, lastFp, inFs, inInf) =>
+        db.query(
+          `INSERT INTO portail_parents_sync (email, last_fp, in_fs, in_inf, updated_at) VALUES ($1,$2,$3,$4,NOW())
+           ON CONFLICT (email) DO UPDATE SET last_fp=$2, in_fs=$3, in_inf=$4, updated_at=NOW()`,
+          [email, lastFp, inFs, inInf]
+        );
+
+      const emails = new Set([...fsMap.keys(), ...infMap.keys()]);
+      for (const email of emails) {
+        const a = fsMap.get(email);
+        const b = infMap.get(email);
+        const s = etat.get(email);
+        try {
+          if (a && b) {
+            rapport.communs++;
+            const fa = fp(a.passwordHash);
+            const fb = fp(b.passwordHash);
+            if (!fa || !fb) { rapport.ignores.push({ email, raison: 'mot de passe ancien format (synchronisé après la prochaine connexion)' }); continue; }
+            if (fa === fb) { rapport.synchronises++; if (!s || s.last_fp !== fa || !s.in_fs || !s.in_inf) await save(email, fa, true, true); continue; }
+            let source = null;
+            if (prefer && prefer.email === email) source = prefer.source;
+            else if (s && s.last_fp === fb) source = 'fichesanitaire'; // l'Infirmerie n'a pas bougé : la Fiche Sanitaire a changé
+            else if (s && s.last_fp === fa) source = 'infirmerie';
+            if (!source) { rapport.conflits.push({ email, nom: `${b.prenom || a.prenom || ''} ${b.nom || a.nom || ''}`.trim() }); continue; }
+            if (source === 'fichesanitaire') {
+              await infApi('POST', '/api/internal/parents/import', { mode: 'password', parent: a });
+              rapport.alignesInf.push(email);
+              await save(email, fa, true, true);
+            } else {
+              await fsApi('POST', '/api/internal/parents/import', { mode: 'password', parent: b });
+              rapport.alignesFs.push(email);
+              await save(email, fb, true, true);
+            }
+            rapport.synchronises++;
+          } else if (a && !b) {
+            if (s && s.in_inf) { await save(email, s.last_fp, true, false); rapport.ignores.push({ email, raison: 'supprimé de la Fiche Infirmerie : non recréé' }); continue; }
+            if (!a.passwordHash) { rapport.ignores.push({ email, raison: 'mot de passe ancien format' }); continue; }
+            await infApi('POST', '/api/internal/parents/import', { mode: 'create', parent: a });
+            rapport.creesInf.push(email);
+            await save(email, fp(a.passwordHash), true, true);
+          } else if (b && !a) {
+            if (s && s.in_fs) { await save(email, s.last_fp, false, true); rapport.ignores.push({ email, raison: 'supprimé de la Fiche Sanitaire : non recréé' }); continue; }
+            if (!b.passwordHash) { rapport.ignores.push({ email, raison: 'mot de passe absent' }); continue; }
+            try {
+              await fsApi('POST', '/api/internal/parents/import', { mode: 'create', parent: b });
+            } catch (e) {
+              if (/email-exists/.test(e.message)) { rapport.ignores.push({ email, raison: 'adresse déjà utilisée par un compte du personnel de la Fiche Sanitaire' }); continue; }
+              throw e;
+            }
+            rapport.creesFs.push(email);
+            await save(email, fp(b.passwordHash), true, true);
+          }
+        } catch (e) {
+          rapport.ignores.push({ email, raison: 'erreur : ' + e.message });
+        }
+      }
+      dernier = { date: new Date(), rapport, erreur: null };
+      const n = rapport.creesFs.length + rapport.creesInf.length + rapport.alignesFs.length + rapport.alignesInf.length;
+      if (n) console.log(`[parents-communs] ${rapport.creesInf.length} créé(s) Infirmerie, ${rapport.creesFs.length} créé(s) Fiche Sanitaire, ${rapport.alignesInf.length + rapport.alignesFs.length} mot(s) de passe aligné(s), ${rapport.conflits.length} conflit(s)`);
+      return rapport;
+    } catch (e) {
+      dernier = { date: new Date(), rapport: null, erreur: e.message };
+      throw e;
+    }
+  })();
+  try {
+    return await enCours;
+  } finally {
+    enCours = null;
+    if (relancer) {
+      relancer = false;
+      setTimeout(() => synchroniser(db).catch(() => {}), 500);
+    }
+  }
+}
+
+function demarrer(db) {
+  // 1re synchronisation 20 s après le démarrage (applications prêtes), puis toutes les 5 minutes
+  setTimeout(() => synchroniser(db).catch((e) => console.error('[parents-communs]', e.message)), 20000);
+  setInterval(() => synchroniser(db).catch((e) => console.error('[parents-communs]', e.message)), 5 * 60000).unref();
+}
+
+module.exports = { migrate, synchroniser, demarrer, etat: () => dernier };
+```
+<!-- SCRIPT-END:apps/portail/parents.js -->
 
 ### `apps/portail/package.json`
 
@@ -3064,6 +3316,7 @@ async function deplacer(id, direction) {
     .resultat { margin-top:.9rem; font-size:.84rem; display:none; }
     .force { font-size:.75rem; margin-top:.4rem; color:#666; }
     @media (max-width:800px) { .noms { grid-template-columns:1fr 1fr; } }
+    @media (max-width:560px) { #parents .compte form { width:100%; } #parents .compte form .btn { flex:1; } }
     @media (max-width:560px) {
       .container { padding:1rem .7rem; } .card { padding:1rem; }
       .noms { grid-template-columns:1fr; }
@@ -3110,6 +3363,45 @@ async function deplacer(id, direction) {
       </div>
       <label class="check"><input type="checkbox" name="maj_titre" value="1"> Mettre aussi à jour le titre du portail (« Portail de santé – nom »)</label>
     </form>
+  </div>
+
+  <!-- ============================ COMPTES PARENTS COMMUNS ============================ -->
+  <div class="card" id="parents">
+    <h2>👨‍👩‍👧 Comptes parents communs (Fiche Sanitaire ⇄ Fiche Infirmerie)</h2>
+    <p class="aide">Un parent n'a qu'<b>un seul compte</b> (son adresse e-mail) pour les deux applications : un compte créé dans l'une est créé automatiquement dans l'autre, et un changement de mot de passe (par le parent, « mot de passe oublié » ou cette console) est recopié dans l'autre. Synchronisation immédiate à chaque modification, et contrôle toutes les 5 minutes. Un compte supprimé d'un côté n'est pas recréé.</p>
+    <% const ps = parentsSync || {}; const r = ps.rapport; %>
+    <% if (ps.erreur) { %><div class="alert ko">Dernière synchronisation en échec : <%= ps.erreur %></div><% } %>
+    <% if (r) { %>
+      <div class="noms">
+        <div class="nom"><b>Fiche Sanitaire</b><div class="v"><%= r.totalFs %> compte(s) parent</div></div>
+        <div class="nom"><b>Fiche Infirmerie</b><div class="v"><%= r.totalInf %> compte(s) parent</div></div>
+        <div class="nom"><b>Comptes communs</b><div class="v"><%= r.synchronises %> synchronisé(s)</div><span class="pill <%= r.conflits.length ? 'p-diff' : 'p-ok' %>"><%= r.conflits.length %> conflit(s)</span></div>
+        <div class="nom"><b>Dernier passage</b><div class="v"><%= new Date(ps.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }) %></div>
+          <% const n = r.creesFs.length + r.creesInf.length + r.alignesFs.length + r.alignesInf.length; %><span class="pill p-ok"><%= n %> modification(s)</span></div>
+      </div>
+    <% } else if (!ps.erreur) { %><div class="vide">Première synchronisation en cours (environ 20 secondes après le démarrage)…</div><% } %>
+
+    <form method="POST" action="/admin/centrale/parents/sync" style="margin:.4rem 0 .8rem"><button class="btn btn-primary" type="submit">🔄 Synchroniser maintenant</button></form>
+
+    <% if (r && r.conflits.length) { %>
+      <div class="groupe">Conflits à résoudre — parents inscrits séparément dans les deux applications avec des mots de passe différents</div>
+      <p class="aide" style="margin-bottom:.4rem">Choisissez le mot de passe à conserver : il deviendra valable dans les deux applications (prévenez le parent). Vous pouvez aussi définir un nouveau mot de passe depuis l'onglet de l'une des deux applications ci-dessous.</p>
+      <% r.conflits.forEach(c => { %>
+        <div class="compte">
+          <div class="t"><b><%= c.nom || c.email %></b><span><%= c.email %></span></div>
+          <form method="POST" action="/admin/centrale/parents/aligner" style="display:flex;gap:.4rem;flex-wrap:wrap">
+            <input type="hidden" name="email" value="<%= c.email %>">
+            <button class="btn btn-ghost btn-sm" name="source" value="fichesanitaire" type="submit">Garder celui de la Fiche Sanitaire</button>
+            <button class="btn btn-ghost btn-sm" name="source" value="infirmerie" type="submit">Garder celui de l'Infirmerie</button>
+          </form>
+        </div>
+      <% }) %>
+    <% } %>
+    <% if (r && r.ignores.length) { %>
+      <details style="margin-top:.6rem;font-size:.8rem"><summary style="cursor:pointer;color:#555"><%= r.ignores.length %> compte(s) non synchronisé(s) — détails</summary>
+        <ul style="margin:.4rem 0 0 1.2rem;color:#555"><% r.ignores.forEach(i => { %><li><%= i.email %> : <%= i.raison %></li><% }) %></ul>
+      </details>
+    <% } %>
   </div>
 
   <!-- ============================ MOTS DE PASSE ============================ -->
@@ -3350,7 +3642,7 @@ async function deplacer(id, direction) {
 ```text
     3650  .env.example
      223  .gitignore
-  189713  README.md
+  209116  README.md
        6  VERSION
       89  apps/fichesanitaire/.dockerignore
     1315  apps/fichesanitaire/.env.example
@@ -3358,10 +3650,10 @@ async function deplacer(id, direction) {
      736  apps/fichesanitaire/Dockerfile
     1016  apps/fichesanitaire/index.html
      998  apps/fichesanitaire/package.json
-   40281  apps/fichesanitaire/server/auth.js
+   45595  apps/fichesanitaire/server/auth.js
     3521  apps/fichesanitaire/server/changelog.js
     9310  apps/fichesanitaire/server/changelog.json
-   79035  apps/fichesanitaire/server/index.js
+   80041  apps/fichesanitaire/server/index.js
    41042  apps/fichesanitaire/src/App.tsx
   187041  apps/fichesanitaire/src/components/AdminSpace.tsx
     1648  apps/fichesanitaire/src/components/AnonymousPopups.tsx
@@ -3380,9 +3672,9 @@ async function deplacer(id, direction) {
    18574  apps/fichesanitaire/src/components/RgpdPanel.tsx
     3467  apps/fichesanitaire/src/components/ScrollButtons.tsx
     5134  apps/fichesanitaire/src/components/SignaturePad.tsx
-   48328  apps/fichesanitaire/src/components/StartupAuthGate.tsx
+   48654  apps/fichesanitaire/src/components/StartupAuthGate.tsx
    29179  apps/fichesanitaire/src/components/TripHealthListModal.tsx
-    4827  apps/fichesanitaire/src/components/WelcomeSettings.tsx
+    4965  apps/fichesanitaire/src/components/WelcomeSettings.tsx
     9912  apps/fichesanitaire/src/components/YearEndPanel.tsx
     4517  apps/fichesanitaire/src/index.css
     1174  apps/fichesanitaire/src/main.tsx
@@ -3404,32 +3696,32 @@ async function deplacer(id, direction) {
       89  apps/infirmerie/.dockerignore
      633  apps/infirmerie/.env.example
       80  apps/infirmerie/.gitignore
-   14215  apps/infirmerie/CAHIER_DES_CHARGES_RGPD.md
-   14219  apps/infirmerie/CAHIER_DES_CHARGES_RGPD_DEFAULT.md
+   14040  apps/infirmerie/CAHIER_DES_CHARGES_RGPD.md
+   14044  apps/infirmerie/CAHIER_DES_CHARGES_RGPD_DEFAULT.md
     1182  apps/infirmerie/Dockerfile
      618  apps/infirmerie/docker-entrypoint.sh
     1765  apps/infirmerie/index.html
      417  apps/infirmerie/metadata.json
     1243  apps/infirmerie/package.json
-   14219  apps/infirmerie/public/CAHIER_DES_CHARGES_RGPD.md
+   14044  apps/infirmerie/public/CAHIER_DES_CHARGES_RGPD.md
        2  apps/infirmerie/public/assets/aistudio/.gitignore
     3861  apps/infirmerie/public/logo.svg
-   69141  apps/infirmerie/server.ts
-   26905  apps/infirmerie/src/App.tsx
-   71058  apps/infirmerie/src/components/AdminDashboard.tsx
-    8017  apps/infirmerie/src/components/AdminLoginCard.tsx
-   13449  apps/infirmerie/src/components/AuthorizationSection.tsx
+   78580  apps/infirmerie/server.ts
+   27022  apps/infirmerie/src/App.tsx
+   71095  apps/infirmerie/src/components/AdminDashboard.tsx
+    8028  apps/infirmerie/src/components/AdminLoginCard.tsx
+   13470  apps/infirmerie/src/components/AuthorizationSection.tsx
     9333  apps/infirmerie/src/components/ChangeStaffPasswordModal.tsx
    11117  apps/infirmerie/src/components/ClassManagementModal.tsx
-    7501  apps/infirmerie/src/components/ConfirmationSuccess.tsx
+    7538  apps/infirmerie/src/components/ConfirmationSuccess.tsx
     4327  apps/infirmerie/src/components/EditStudentClassModal.tsx
-   29435  apps/infirmerie/src/components/FicheDocumentPreview.tsx
-    7552  apps/infirmerie/src/components/Header.tsx
+   29446  apps/infirmerie/src/components/FicheDocumentPreview.tsx
+    7558  apps/infirmerie/src/components/Header.tsx
    14601  apps/infirmerie/src/components/HealthFormSection.tsx
-   27470  apps/infirmerie/src/components/ParentAuthCard.tsx
+   27716  apps/infirmerie/src/components/ParentAuthCard.tsx
    14663  apps/infirmerie/src/components/ReviewModalOrStep.tsx
-   70124  apps/infirmerie/src/components/RgpdComplianceView.tsx
-   10220  apps/infirmerie/src/components/SchoolBrandingModal.tsx
+   70730  apps/infirmerie/src/components/RgpdComplianceView.tsx
+   10196  apps/infirmerie/src/components/SchoolBrandingModal.tsx
     8398  apps/infirmerie/src/components/SignaturePad.tsx
    22287  apps/infirmerie/src/components/StudentFormSection.tsx
    12510  apps/infirmerie/src/components/VaccinationUpload.tsx
@@ -3437,19 +3729,21 @@ async function deplacer(id, direction) {
      384  apps/infirmerie/src/main.tsx
     6340  apps/infirmerie/src/types.ts
     3358  apps/infirmerie/src/utils/apiAuth.ts
+    1231  apps/infirmerie/src/utils/branding.ts
     4160  apps/infirmerie/src/utils/logoHelper.ts
-   29063  apps/infirmerie/src/utils/pdfGenerator.ts
-   11762  apps/infirmerie/src/utils/rgpdPdfGenerator.ts
+   29028  apps/infirmerie/src/utils/pdfGenerator.ts
+   11745  apps/infirmerie/src/utils/rgpdPdfGenerator.ts
      538  apps/infirmerie/tsconfig.json
      744  apps/infirmerie/vite.config.ts
       89  apps/portail/.dockerignore
       25  apps/portail/.gitignore
      480  apps/portail/Dockerfile
-   10278  apps/portail/centrale.js
+   10495  apps/portail/centrale.js
    40396  apps/portail/package-lock.json
      366  apps/portail/package.json
-   19750  apps/portail/server.js
-   15879  apps/portail/views/admin/centrale.ejs
+    8464  apps/portail/parents.js
+   22983  apps/portail/server.js
+   19511  apps/portail/views/admin/centrale.ejs
    15918  apps/portail/views/admin/index.ejs
     2211  apps/portail/views/admin/login.ejs
     2197  apps/portail/views/login.ejs
@@ -3464,7 +3758,7 @@ async function deplacer(id, direction) {
    42991  apps/voyages/server.ts
    25101  apps/voyages/server/attachments.ts
     4248  apps/voyages/server/auth.ts
-  138411  apps/voyages/server/db.ts
+  138459  apps/voyages/server/db.ts
    10453  apps/voyages/src/App.tsx
    82746  apps/voyages/src/components/AdminDocuSealManager.tsx
     8029  apps/voyages/src/components/AdminLoginModal.tsx
@@ -3490,25 +3784,25 @@ async function deplacer(id, direction) {
     1251  apps/voyages/src/utils/storage.ts
      508  apps/voyages/tsconfig.json
      387  apps/voyages/vite.config.ts
-    6016  docker-compose.yml
-   33918  docs/DOCUMENTATION.md
- 2520620  docs/README-CODE-COMPLET.md
+    6194  docker-compose.yml
+   36999  docs/DOCUMENTATION.md
+ 2554549  docs/README-CODE-COMPLET.md
    82686  docs/origine/README-fichesanitaire.md
    27421  docs/origine/README-infirmerie.md
       18  docs/origine/README-portail.md
   163255  docs/origine/README-voyages.md
- 2815721  installer-ndm-sante.sh
+ 2852929  installer-ndm-sante.sh
      485  installer/footer.sh
     2631  installer/header.sh
     1863  passerelle/ndm-proxy.conf
     1973  passerelle/templates/default.conf.template
      452  postgres-init/01-bases.sh
     2289  scripts/fabriquer-installateur.sh
-   10401  scripts/generer-readme.sh
-   11997  scripts/installer.sh
+   10425  scripts/generer-readme.sh
+   12152  scripts/installer.sh
     6143  scripts/ndm.sh
-    4764  scripts/push-github.sh
+    4825  scripts/push-github.sh
 ```
 
 ---
-*Fin du README — généré le 11/10/2026 à 18:32 par scripts/generer-readme.sh*
+*Fin du README — généré le 11/10/2026 à 18:34 par scripts/generer-readme.sh*

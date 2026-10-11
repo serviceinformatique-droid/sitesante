@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSchoolName } from '../utils/branding';
 import { FicheInfirmerieData } from '../types';
 import { generateFichePDF, getFicheFileName, generateCarnetPDF, getCarnetFileName } from '../utils/pdfGenerator';
 import {
@@ -32,6 +33,7 @@ export function FicheDocumentPreview({
   initialTab = 'fiche',
   onClose,
 }: FicheDocumentPreviewProps) {
+  const nomEtab = useSchoolName();
   const [activeView, setActiveView] = useState<'fiche' | 'carnet' | 'pdf_raw'>(initialTab);
   const [downloading, setDownloading] = useState(false);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
@@ -208,12 +210,12 @@ export function FicheDocumentPreview({
                 <div className="flex items-center gap-4">
                   <img
                     src="/logo.svg"
-                    alt="Logo Notre-Dame des Missions - Saint-Pierre"
+                    alt={`Logo ${nomEtab}`}
                     className="w-14 h-16 object-contain shrink-0"
                   />
                   <div className="text-left space-y-0.5">
                     <h3 className="font-bold text-sm sm:text-base text-blue-950 uppercase tracking-wide">
-                      Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+                      {nomEtab}
                     </h3>
                     <p className="text-[11px] text-slate-500">
                       Établissement Catholique d'Enseignement • Sous-contrat d'Association avec l'État • Service Infirmerie

@@ -574,7 +574,7 @@ const WELCOME_KEY = 'cerfa_messages_welcome_v1';
 const WELCOME_DEFAULT_SUBJECT = 'Bienvenue — à lire avant de commencer';
 const WELCOME_DEFAULT_BODY = `Bonjour {prenom},
 
-Bienvenue sur le portail des fiches sanitaires de liaison de l'Ensemble Scolaire Notre Dame des Missions.
+Bienvenue sur le portail des fiches sanitaires de liaison de {etablissement}.
 
 Un seul compte suffit pour toute la famille : ne créez pas un compte par enfant. Pour chaque enfant, cliquez sur le bouton « + Ajouter un enfant » (en haut de votre espace ; « Ajouter mon premier enfant » la première fois) : sa fiche sanitaire est créée dans votre compte, et vous retrouvez toutes vos fiches dans « Mes enfants ».
 
@@ -602,6 +602,13 @@ async function welcomeTextMigration() {
   try {
     const c = await readKv(WELCOME_KEY);
     if (!c || typeof c.body !== 'string') return; // aucun texte personnalisé : le nouveau texte par défaut s'applique
+    // build etablissement-central-20261011 : le nom en dur devient la variable {etablissement}
+    const OLD_NAME = "de l'Ensemble Scolaire Notre Dame des Missions.";
+    if (c.body.includes(OLD_NAME)) {
+      c.body = c.body.split(OLD_NAME).join('de {etablissement}.');
+      await writeKv(WELCOME_KEY, { ...c, updatedAt: new Date().toISOString(), updatedBy: 'maj-etablissement-central' });
+      console.log("[accueil] Nom de l'établissement du message d'accueil remplacé par la variable {etablissement}");
+    }
     if (!/créer un compte par enfant|adresse e-mail différente pour chaque compte/.test(c.body)) return; // déjà à jour
     const OLD_P1 = 'Merci de créer un compte par enfant. Chaque enfant a sa propre fiche sanitaire, et la signature d\'un seul responsable légal suffit pour la valider : il n\'est donc pas nécessaire que les deux parents créent un compte ni signent la fiche.';
     const OLD_P2 = 'Si vous avez plusieurs enfants, utilisez une adresse e-mail différente pour chaque compte (une adresse e-mail ne peut servir qu\'à un seul compte).';
@@ -620,14 +627,21 @@ async function welcomeTextMigration() {
   }
 }
 
-function commRenderWelcome(text, user) {
+// {etablissement} : nom enregistré de l'établissement (géré depuis la gestion centralisée du portail NDM)
+async function commEstablishmentName() {
+  const n = await readKv('cerfa_establishment_name_v1');
+  return (typeof n === 'string' && n.trim()) || "l'établissement";
+}
+
+function commRenderWelcome(text, user, etablissement) {
   // Seuls firstName / lastName renseignés sont utilisés (jamais de découpage du nom complet :
   // « DUPONT Jean » serait mal salué). Sans prénom : « Bonjour, ».
   const first = commClip(user.firstName || '', 80);
   const last = commClip(user.lastName || '', 80);
   return String(text)
     .replace(/\s*\{prenom\}/g, first ? ' ' + first : '')
-    .replace(/\s*\{nom\}/g, last ? ' ' + last : '');
+    .replace(/\s*\{nom\}/g, last ? ' ' + last : '')
+    .replace(/\{etablissement\}/g, etablissement || "l'établissement");
 }
 
 function commBuildWelcomeThread(user, cfg, now) {
@@ -635,7 +649,7 @@ function commBuildWelcomeThread(user, cfg, now) {
     id: commId('t'),
     parentId: user.id,
     parentName: user.name || 'Parent',
-    subject: commRenderWelcome(cfg.subject, user),
+    subject: commRenderWelcome(cfg.subject, user, cfg.etablissement),
     kind: 'welcome',
     createdAt: now,
     lastMessageAt: now,
@@ -647,7 +661,7 @@ function commBuildWelcomeThread(user, cfg, now) {
         fromRole: 'admin',
         fromUserId: 'system',
         fromName: 'Administration',
-        body: commRenderWelcome(cfg.body, user),
+        body: commRenderWelcome(cfg.body, user, cfg.etablissement),
         createdAt: now,
       },
     ],
@@ -657,7 +671,7 @@ function commBuildWelcomeThread(user, cfg, now) {
 // Crée le message d'accueil d'un parent (une seule fois par compte). Retourne true si créé.
 async function commSendWelcome(user) {
   return withCommLock(async () => {
-    const cfg = await commGetWelcomeConfig();
+    const cfg = { ...(await commGetWelcomeConfig()), etablissement: await commEstablishmentName() };
     if (!cfg.enabled) return false;
     const threads = (await readKv(MESSAGES_KEY)) || [];
     if (threads.some((t) => t.parentId === user.id && t.kind === 'welcome')) return false;
@@ -753,7 +767,7 @@ app.post('/api/messages/welcome/send-existing', async (req, res) => {
   try {
     await withCommLock(async () => {
       if (!(await commRequireAdmin(req.body && req.body.userId, res))) return;
-      const cfg = await commGetWelcomeConfig();
+      const cfg = { ...(await commGetWelcomeConfig()), etablissement: await commEstablishmentName() };
       const users = (await readKv(USERS_KEY)) || [];
       const threads = (await readKv(MESSAGES_KEY)) || [];
       const already = new Set(threads.filter((t) => t.kind === 'welcome').map((t) => t.parentId));

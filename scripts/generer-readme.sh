@@ -141,7 +141,7 @@ for f in scripts/installer.sh scripts/ndm.sh scripts/push-github.sh scripts/gene
          installer/header.sh installer/footer.sh docker-compose.yml .env.example .gitignore VERSION \
          passerelle/templates/default.conf.template passerelle/ndm-proxy.conf postgres-init/01-bases.sh \
          apps/portail/Dockerfile apps/fichesanitaire/Dockerfile apps/infirmerie/Dockerfile apps/infirmerie/docker-entrypoint.sh \
-         apps/voyages/Dockerfile apps/portail/server.js apps/portail/centrale.js apps/portail/package.json \
+         apps/voyages/Dockerfile apps/portail/server.js apps/portail/centrale.js apps/portail/parents.js apps/portail/package.json \
          apps/portail/views/portail.ejs apps/portail/views/admin/index.ejs apps/portail/views/admin/centrale.ejs apps/portail/views/admin/login.ejs apps/portail/views/login.ejs; do
   [ -f "$f" ] || continue
   echo "### \`$f\`"

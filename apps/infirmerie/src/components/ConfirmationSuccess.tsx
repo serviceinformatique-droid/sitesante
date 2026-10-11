@@ -3,6 +3,7 @@ import { getFicheFileName, getCarnetFileName, formatClassDirectory } from '../ut
 import { CheckCircle2, Download, Cloud, Mail, FileText, ArrowRight, ShieldCheck, RefreshCw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useEffect } from 'react';
+import { useSchoolName } from '../utils/branding';
 
 interface ConfirmationSuccessProps {
   data: FicheInfirmerieData;
@@ -19,6 +20,7 @@ export function ConfirmationSuccess({
   onReset,
   onGoToAdmin,
 }: ConfirmationSuccessProps) {
+  const nomEtab = useSchoolName();
   useEffect(() => {
     // Launch celebratory confetti
     confetti({
@@ -144,7 +146,7 @@ export function ConfirmationSuccess({
           </p>
           <p className="pt-2 text-slate-500">
             Cordialement,<br />
-            <strong>Ensemble scolaire Notre-Dame des Missions – Saint-Pierre</strong>
+            <strong>{nomEtab}</strong>
           </p>
         </div>
       </div>

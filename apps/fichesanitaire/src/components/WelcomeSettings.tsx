@@ -57,7 +57,8 @@ export const WelcomeSettings: React.FC<{ adminId: string }> = ({ adminId }) => {
       <p className="text-xs text-slate-500">
         Ce message est déposé automatiquement dans la messagerie de chaque parent qui crée un compte. Vous pouvez utiliser{' '}
         <code className="bg-slate-200 px-1 rounded">{'{prenom}'}</code> et <code className="bg-slate-200 px-1 rounded">{'{nom}'}</code> : ils sont remplacés par
-        le prénom et le nom du parent.
+        le prénom et le nom du parent, et <code className="bg-slate-200 px-1 rounded">{'{etablissement}'}</code> : remplacé par le nom de
+        l'établissement enregistré.
       </p>
       <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
         <input type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} />

@@ -193,7 +193,8 @@ interface SchoolBranding {
 }
 
 const DEFAULT_BRANDING: SchoolBranding = {
-  schoolName: 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE',
+  // Nom initial : ETABLISSEMENT_NOM du .env (ensuite : gestion centralisée du portail NDM ou « Identité & Logo »)
+  schoolName: (process.env.ETABLISSEMENT_NOM || '').trim() || 'Ensemble Scolaire Notre-Dame des Missions',
   subTitle: "Sous-contrat d'Association avec l'État",
   logoDataUrl: '',
 };
@@ -576,6 +577,86 @@ function verifyPassword(password: string, hash: string, salt: string): boolean {
   return calculated === hash;
 }
 
+// ----------------------------------------------------------------------------
+// Comptes parents communs avec la Fiche Sanitaire (build parents-communs-20261011)
+// Un compte parent créé dans l'une des deux applications est recopié dans l'autre par le portail NDM,
+// SANS mot de passe en clair : les empreintes sont échangées sous forme « portable » :
+//   pbkdf2-sha512$100000$<sel>$<hex>   (mot de passe Infirmerie)
+//   pbkdf2a-sha256$50000$<sel>$<hex>   (réponse secrète Infirmerie)
+//   scrypt$N$r$p$<sel b64>$<clé b64>   (format Fiche Sanitaire, vérifié ici tel quel)
+// ----------------------------------------------------------------------------
+function verifyScrypt(plain: string, stored: string): boolean {
+  try {
+    const [, N, r, p, salt, key] = stored.split('$');
+    const exp = Buffer.from(key, 'base64');
+    const got = crypto.scryptSync(plain, Buffer.from(salt, 'base64'), exp.length, { N: Number(N), r: Number(r), p: Number(p), maxmem: 64 * 1024 * 1024 });
+    return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+  } catch {
+    return false;
+  }
+}
+
+function verifyPortable(plain: string, stored: string, kind: 'password' | 'answer'): boolean {
+  if (stored.startsWith('scrypt$')) {
+    // Fiche Sanitaire : réponse secrète = minuscules + espaces retirés aux extrémités
+    return verifyScrypt(kind === 'answer' ? plain.trim().toLowerCase() : plain, stored);
+  }
+  const [k, iter, salt, hex] = stored.split('$');
+  try {
+    const exp = Buffer.from(hex, 'hex');
+    if (k === 'pbkdf2-sha512') {
+      const got = crypto.pbkdf2Sync(plain, salt, Number(iter), 64, 'sha512');
+      return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+    }
+    if (k === 'pbkdf2a-sha256') {
+      const norm = plain.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const got = crypto.pbkdf2Sync(norm, salt, Number(iter), 32, 'sha256');
+      return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+    }
+  } catch {
+    /* format invalide */
+  }
+  return false;
+}
+
+function verifyParentPassword(p: ParentAccount, password: string): boolean {
+  if (p.hash && p.hash.includes('$')) return verifyPortable(password, p.hash, 'password');
+  return verifyPassword(password, p.hash, p.salt);
+}
+
+function verifyParentAnswer(p: ParentAccount, answer: string): boolean {
+  if (p.secretAnswerHash && p.secretAnswerHash.includes('$')) return verifyPortable(answer, p.secretAnswerHash, 'answer');
+  const a = Buffer.from(hashSecretAnswer(answer, p.salt), 'hex');
+  const b = Buffer.from(p.secretAnswerHash || '', 'hex');
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
+/** Empreintes au format portable (pour la synchronisation) */
+function portablePassword(p: ParentAccount): string | null {
+  if (!p.hash) return null;
+  return p.hash.includes('$') ? p.hash : `pbkdf2-sha512$100000$${p.salt}$${p.hash}`;
+}
+function portableAnswer(p: ParentAccount): string | null {
+  if (!p.secretAnswerHash) return null;
+  return p.secretAnswerHash.includes('$') ? p.secretAnswerHash : `pbkdf2a-sha256$50000$${p.salt}$${p.secretAnswerHash}`;
+}
+
+// Prévient le portail NDM qu'un compte a changé (regroupé sur 1,5 s, sans donnée)
+let pingTimer: NodeJS.Timeout | null = null;
+let pingSuspendu = false;
+function pingSyncParents() {
+  const secret = process.env.NDM_INTERNAL_SECRET || '';
+  if (pingSuspendu || secret.length < 24 || pingTimer) return;
+  pingTimer = setTimeout(() => {
+    pingTimer = null;
+    fetch((process.env.NDM_PORTAIL_INTERNAL_URL || 'http://portail:3020') + '/internal/parents/sync', {
+      method: 'POST',
+      headers: { 'X-Ndm-Internal': secret },
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  }, 1500);
+}
+
 function hashSecretAnswer(answer: string, salt: string): string {
   const normalized = answer.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   return crypto.pbkdf2Sync(normalized, salt, 50000, 32, 'sha256').toString('hex');
@@ -679,6 +760,7 @@ function getAccounts(): AccountStore {
 function saveAccounts(store: AccountStore) {
   const encrypted = encryptData(store);
   fs.writeFileSync(ACCOUNTS_ENC_FILE, encrypted, 'utf-8');
+  pingSyncParents();
 }
 
 // Initialise accounts on startup
@@ -789,16 +871,67 @@ app.post('/api/branding', (req, res) => {
       logoDataUrl: logoDataUrl !== undefined ? logoDataUrl : current.logoDataUrl,
     };
     saveSchoolBranding(updated);
+    if (updated.schoolName !== current.schoolName) renommerDansCahier(current.schoolName, updated.schoolName);
     res.json({ success: true, branding: updated, message: 'Identité et logo mis à jour avec succès.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// ---------------------------------------------------------------------------
+// Nom de l'établissement dans le cahier des charges RGPD (build etablissement-central-20261011)
+// Le modèle contient la variable {{ETABLISSEMENT}}, remplacée à l'affichage par le nom enregistré.
+// Une version modifiée par l'administration (texte concret) est mise à jour lors d'un changement de nom.
+// ---------------------------------------------------------------------------
+const CAHIER_VAR = '{{ETABLISSEMENT}}';
+const CAHIER_FILES = () => [path.join(process.cwd(), 'CAHIER_DES_CHARGES_RGPD.md'), path.join(process.cwd(), 'public', 'CAHIER_DES_CHARGES_RGPD.md')];
+
+function renderCahier(md: string): string {
+  return String(md || '').split(CAHIER_VAR).join(getSchoolBranding().schoolName);
+}
+
+function renommerDansCahier(ancien: string, nouveau: string) {
+  if (!ancien || !nouveau || ancien === nouveau) return;
+  for (const f of CAHIER_FILES()) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const md = fs.readFileSync(f, 'utf-8');
+      if (md.includes(ancien)) {
+        fs.writeFileSync(f, md.split(ancien).join(nouveau), 'utf-8');
+        console.log(`[etablissement] Cahier des charges RGPD : « ${ancien} » remplacé par « ${nouveau} » (${path.basename(path.dirname(f))})`);
+      }
+    } catch (e: any) {
+      console.error('[etablissement] Cahier des charges non mis à jour :', e.message);
+    }
+  }
+}
+
+// Installation existante : l'ancien nom écrit en dur dans le cahier devient la variable (une seule fois)
+(function migrerCahier() {
+  const ANCIEN = 'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre';
+  for (const f of CAHIER_FILES()) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const md = fs.readFileSync(f, 'utf-8');
+      if (!md.includes(ANCIEN)) continue;
+      const neuf = md
+        .split(`de l'${ANCIEN}`).join(`de l'établissement ${CAHIER_VAR}`)
+        .split(`Pour l'${ANCIEN}`).join(`Pour l'établissement ${CAHIER_VAR}`)
+        .split(ANCIEN).join(CAHIER_VAR);
+      fs.writeFileSync(f, neuf, 'utf-8');
+      console.log('[etablissement] Cahier des charges RGPD : nom en dur remplacé par la variable', CAHIER_VAR);
+    } catch (e: any) {
+      console.error('[etablissement] Migration du cahier impossible :', e.message);
+    }
+  }
+})();
+
 // Reset branding to default
 app.post('/api/branding/reset', (req, res) => {
   try {
+    const avant = getSchoolBranding().schoolName;
     saveSchoolBranding(DEFAULT_BRANDING);
+    renommerDansCahier(avant, DEFAULT_BRANDING.schoolName);
     res.json({ success: true, branding: DEFAULT_BRANDING, message: 'Identité réinitialisée par défaut.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -1183,7 +1316,7 @@ app.post('/api/auth/parent/register', (req, res) => {
     const store = getAccounts();
     const existing = store.parents.find((p) => p.email === cleanEmail);
     if (existing) {
-      return res.status(409).json({ success: false, error: 'Un compte parent existe déjà avec cette adresse email.' });
+      return res.status(409).json({ success: false, error: "Un compte parent existe déjà avec cette adresse email (le compte est commun à la Fiche Sanitaire et à la Fiche Infirmerie) : connectez-vous avec le même mot de passe, ou utilisez « Mot de passe oublié »." });
     }
 
     const { hash, salt } = hashPassword(password);
@@ -1243,7 +1376,7 @@ app.post('/api/auth/parent/login', (req, res) => {
       return res.status(401).json({ success: false, error: 'Email ou mot de passe incorrect.' });
     }
 
-    const isValid = verifyPassword(password, parent.hash, parent.salt);
+    const isValid = verifyParentPassword(parent, password);
     if (!isValid) {
       recordFailure(req);
       return res.status(401).json({ success: false, error: 'Email ou mot de passe incorrect.' });
@@ -1315,8 +1448,7 @@ app.post('/api/auth/parent/forgot-password/reset', (req, res) => {
     if (locked) {
       return res.status(429).json({ success: false, error: `Trop d'essais infructueux. Réessayez dans ${locked} min.` });
     }
-    const testAnswerHash = hashSecretAnswer(secretAnswer, parent.salt);
-    if (testAnswerHash !== parent.secretAnswerHash) {
+    if (!verifyParentAnswer(parent, secretAnswer)) {
       recordFailure(req);
       return res.status(401).json({ success: false, error: 'La réponse à la question secrète est incorrecte.' });
     }
@@ -1511,15 +1643,79 @@ app.post('/api/internal/set-password', (req, res) => {
       if (!p) return res.status(404).json({ success: false, error: 'Compte parent introuvable.' });
       // La réponse secrète est hachée avec le sel du mot de passe : elle est conservée telle quelle
       // en réutilisant l'ancien sel pour le nouveau mot de passe.
-      p.hash = hashPassword(password, p.salt).hash;
+      const sel = p.salt || crypto.randomBytes(16).toString('hex');
+      p.hash = hashPassword(password, sel).hash;
+      p.salt = sel;
       saveAccounts(store);
       revokeSessionsOf('parent', p.id);
       console.log(`[securite] Mot de passe du parent « ${p.email} » redéfini par le portail NDM`);
-      return res.json({ success: true, message: `Mot de passe de ${p.prenom} ${p.nom} (${p.email}) modifié.` });
+      return res.json({ success: true, email: p.email, message: `Mot de passe de ${p.prenom} ${p.nom} (${p.email}) modifié.` });
     }
     return res.status(400).json({ success: false, error: 'Type de compte inconnu.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7ter. COMPTES PARENTS COMMUNS (synchronisation orchestrée par le portail NDM)
+app.get('/api/internal/parents', (req, res) => {
+  const store = getAccounts();
+  res.json({
+    parents: store.parents.map((p) => ({
+      email: String(p.email || '').trim().toLowerCase(),
+      nom: p.nom,
+      prenom: p.prenom,
+      telephone: p.telephone,
+      passwordHash: portablePassword(p),
+      secretQuestion: p.secretQuestion,
+      secretAnswerHash: portableAnswer(p),
+    })),
+  });
+});
+
+app.post('/api/internal/parents/import', (req, res) => {
+  const { parent: src, mode } = req.body || {};
+  if (!src || !src.email || !src.passwordHash) return res.status(400).json({ success: false, error: 'parent invalide' });
+  const email = String(src.email).trim().toLowerCase();
+  pingSuspendu = true; // une importation venant du portail ne relance pas une synchronisation
+  try {
+    const store = getAccounts();
+    const existant = store.parents.find((p) => p.email === email);
+    if (mode === 'create') {
+      if (existant) return res.status(409).json({ success: false, error: 'email-exists' });
+      store.parents.push({
+        id: `parent-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        email,
+        nom: String(src.nom || '').trim().toUpperCase() || email,
+        prenom: String(src.prenom || '').trim(),
+        telephone: String(src.telephone || '').trim(),
+        hash: String(src.passwordHash),
+        salt: crypto.randomBytes(16).toString('hex'),
+        secretQuestion: src.secretQuestion || 'Quel est le nom de votre premier animal de compagnie ?',
+        secretAnswerHash: src.secretAnswerHash ? String(src.secretAnswerHash) : '',
+        createdAt: new Date().toISOString(),
+      } as ParentAccount);
+      saveAccounts(store);
+      console.log(`[parents-communs] compte parent ${email} créé depuis la Fiche Sanitaire`);
+      return res.json({ success: true });
+    }
+    if (mode === 'password') {
+      if (!existant) return res.status(404).json({ success: false, error: 'no-account' });
+      existant.hash = String(src.passwordHash);
+      if (src.secretAnswerHash) {
+        existant.secretAnswerHash = String(src.secretAnswerHash);
+        if (src.secretQuestion) existant.secretQuestion = src.secretQuestion;
+      }
+      saveAccounts(store);
+      revokeSessionsOf('parent', existant.id);
+      console.log(`[parents-communs] mot de passe du parent ${email} aligné sur la Fiche Sanitaire`);
+      return res.json({ success: true });
+    }
+    return res.status(400).json({ success: false, error: 'mode invalide' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    pingSuspendu = false;
   }
 });
 
@@ -1823,15 +2019,12 @@ app.get('/api/stats', (req, res) => {
 
 // Serve RGPD specifications document
 app.get('/CAHIER_DES_CHARGES_RGPD.md', (req, res) => {
-  const filePath = path.join(process.cwd(), 'CAHIER_DES_CHARGES_RGPD.md');
-  if (fs.existsSync(filePath)) {
-    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    return res.sendFile(filePath);
-  }
-  const publicPath = path.join(process.cwd(), 'public', 'CAHIER_DES_CHARGES_RGPD.md');
-  if (fs.existsSync(publicPath)) {
-    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    return res.sendFile(publicPath);
+  // Le nom de l'établissement est inséré à la volée (variable {{ETABLISSEMENT}})
+  for (const f of CAHIER_FILES()) {
+    if (fs.existsSync(f)) {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      return res.send(renderCahier(fs.readFileSync(f, 'utf-8')));
+    }
   }
   res.status(404).send('Document introuvable');
 });
@@ -1860,7 +2053,9 @@ app.get('/api/rgpd/cahier-des-charges', (req, res) => {
       }
     }
 
-    return res.json({ success: true, markdown, config });
+    // Nom de l'établissement : toujours celui de l'identité enregistrée (gestion centralisée)
+    if (config && typeof config === 'object') (config as any).etablissement = getSchoolBranding().schoolName;
+    return res.json({ success: true, markdown: renderCahier(markdown), config });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -1916,7 +2111,7 @@ app.post('/api/rgpd/cahier-des-charges/reset', (req, res) => {
       } catch {}
     }
 
-    return res.json({ success: true, markdown: defaultContent, message: 'Réinitialisation au modèle officiel effectuée' });
+    return res.json({ success: true, markdown: renderCahier(defaultContent), message: 'Réinitialisation au modèle officiel effectuée' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }

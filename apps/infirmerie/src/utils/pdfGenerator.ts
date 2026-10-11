@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { FicheInfirmerieData, VaccinationDetail } from '../types';
 import { getSchoolLogoDataUrl } from './logoHelper';
+import { getSchoolName, getSchoolNameUpper } from './branding';
 
 export function sanitizeFileName(name: string): string {
   return name
@@ -210,7 +211,7 @@ export async function generateFichePDF(data: FicheInfirmerieData): Promise<Blob>
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.setTextColor(primaryNavy[0], primaryNavy[1], primaryNavy[2]);
-  doc.text('ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE', margin + 17, y + 6);
+  doc.text(getSchoolNameUpper(), margin + 17, y + 6);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
@@ -553,7 +554,7 @@ export async function generateFichePDF(data: FicheInfirmerieData): Promise<Blob>
   doc.setFontSize(6.8);
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
 
-  const clause1 = "• L'École Notre-Dame des Missions-St-Pierre à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.";
+  const clause1 = "• " + getSchoolName() + " à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.";
   const clause2 = "• Le praticien à pratiquer tout examen médical ou chirurgical nécessaire à l'établissement d'un diagnostic, et toute intervention médicale ou chirurgicale y compris avec phase d'anesthésie-réanimation que nécessiterait l'état de santé de mon enfant.";
 
   const split1 = doc.splitTextToSize(clause1, contentWidth - 55);
@@ -725,7 +726,7 @@ export async function generateCarnetPDF(data: FicheInfirmerieData): Promise<Blob
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(15, 37, 87);
-    doc.text('ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE', margin, 15);
+    doc.text(getSchoolNameUpper(), margin, 15);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);

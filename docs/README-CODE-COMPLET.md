@@ -1,4 +1,4 @@
-# NDM SANTÉ — code source complet (v1.2.0, 11/10/2026 à 18:32)
+# NDM SANTÉ — code source complet (v1.3.0, 11/10/2026 à 18:34)
 
 Tous les fichiers sources des 4 applications et de l'infrastructure, tels qu'installés dans `/opt/ndm-sante`.
 Les fichiers `package-lock.json` sont exclus (régénérés par npm). Documentation d'exploitation : `README.md`.
@@ -90,6 +90,7 @@ Les fichiers `package-lock.json` sont exclus (régénérés par npm). Documentat
 - `apps/infirmerie/src/main.tsx`
 - `apps/infirmerie/src/types.ts`
 - `apps/infirmerie/src/utils/apiAuth.ts`
+- `apps/infirmerie/src/utils/branding.ts`
 - `apps/infirmerie/src/utils/logoHelper.ts`
 - `apps/infirmerie/src/utils/pdfGenerator.ts`
 - `apps/infirmerie/src/utils/rgpdPdfGenerator.ts`
@@ -100,6 +101,7 @@ Les fichiers `package-lock.json` sont exclus (régénérés par npm). Documentat
 - `apps/portail/Dockerfile`
 - `apps/portail/centrale.js`
 - `apps/portail/package.json`
+- `apps/portail/parents.js`
 - `apps/portail/server.js`
 - `apps/portail/views/admin/centrale.ejs`
 - `apps/portail/views/admin/index.ejs`
@@ -380,7 +382,32 @@ async function hashSecret(plain) {
   const key = await scrypt(String(plain), salt, 64, { N, r, p, maxmem: 64 * 1024 * 1024 });
   return `scrypt$${N}$${r}$${p}$${salt.toString('base64')}$${key.toString('base64')}`;
 }
+// Empreintes venant de la Fiche Infirmerie (comptes parents communs, build parents-communs-20261011) :
+//  - mot de passe : pbkdf2-sha512$<itérations>$<sel hex>$<empreinte hex>
+//  - réponse secrète : pbkdf2a-sha256$<itérations>$<sel hex>$<empreinte hex> (réponse sans accents, minuscules)
+function verifyForeign(plain, stored) {
+  const parts = String(stored || '').split('$');
+  if (parts.length !== 4) return null;
+  const [kind, iter, salt, hex] = parts;
+  let input = String(plain);
+  let digest, len;
+  if (kind === 'pbkdf2-sha512') { digest = 'sha512'; len = 64; }
+  else if (kind === 'pbkdf2a-sha256') {
+    digest = 'sha256'; len = 32;
+    input = input.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  } else return null;
+  try {
+    const got = crypto.pbkdf2Sync(input, salt, Number(iter), len, digest);
+    const exp = Buffer.from(hex, 'hex');
+    return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+  } catch {
+    return false;
+  }
+}
+
 async function verifyHash(plain, stored) {
+  const foreign = verifyForeign(plain, stored);
+  if (foreign !== null) return foreign;
   try {
     const parts = String(stored || '').split('$');
     if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
@@ -465,6 +492,7 @@ function install(app, deps) {
   // --- secret des outils locaux (rattacher-fiche.sh, commandes du README) ---
   const SECRET_FILE = path.join(__dirname, '..', '.local-tool-secret');
   let TOOL_SECRET = process.env.LOCAL_TOOL_SECRET || '';
+  const TOOL_SECRET_ENV = TOOL_SECRET; // secret partagé NDM (vide hors plateforme NDM : pas de synchronisation)
   if (!TOOL_SECRET) {
     try {
       TOOL_SECRET = crypto.randomBytes(32).toString('hex');
@@ -486,9 +514,25 @@ function install(app, deps) {
   const invalidateUsers = () => {
     usersCache = null;
   };
+  // Comptes parents communs : chaque modification de comptes prévient le portail NDM, qui synchronise
+  // avec la Fiche Infirmerie (appel interne, sans donnée, regroupé sur 1,5 s)
+  let pingTimer = null;
+  let pingSuspendu = false;
+  function pingSyncParents() {
+    if (pingSuspendu || !TOOL_SECRET_ENV || pingTimer) return;
+    pingTimer = setTimeout(() => {
+      pingTimer = null;
+      fetch((process.env.NDM_PORTAIL_INTERNAL_URL || 'http://portail:3020') + '/internal/parents/sync', {
+        method: 'POST',
+        headers: { 'X-Ndm-Internal': TOOL_SECRET_ENV },
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
+    }, 1500);
+  }
   async function saveUsers(list) {
     await writeKv(K.users, list);
     invalidateUsers();
+    pingSyncParents();
   }
 
   // --- sessions ---
@@ -629,6 +673,8 @@ function install(app, deps) {
     ['POST', /^\/api\/auth\/change-password$/, 'user'],
     ['POST', /^\/api\/auth\/impersonate$/, 'admin'],
     ['POST', /^\/api\/auth\/test-token$/, 'system'],
+    ['GET', /^\/api\/internal\/parents$/, 'system'],
+    ['POST', /^\/api\/internal\/parents\/import$/, 'system'],
     ['GET', /^\/api\/magic-link\/[^/]+$/, 'magic'],
     ['PUT', /^\/api\/magic-link\/[^/]+$/, 'magic'],
     ['GET', /^\/api\/(popups\/public|year-end\/public)$/, 'public'],
@@ -822,6 +868,7 @@ function install(app, deps) {
       req.body.user = await mergeUser(base, incoming);
       invalidateUsers();
       res.on('finish', invalidateUsers);
+      res.on('finish', pingSyncParents);
       return next();
     }
     // un utilisateur ne modifie que son propre profil : jamais son rôle, ses voyages ni son mot de passe
@@ -879,6 +926,83 @@ function install(app, deps) {
     }
     return deny(res, 403, 'forbidden');
   }
+
+  // --- comptes parents communs avec la Fiche Infirmerie (appel système du portail NDM uniquement) ---
+  app.get('/api/internal/parents', async (req, res) => {
+    const users = (await readKv(K.users)) || [];
+    res.json({
+      parents: users
+        .filter((u) => u && u.role === 'parent' && u.email)
+        .map((u) => ({
+          email: String(u.email).trim().toLowerCase(),
+          nom: u.lastName || u.name || '',
+          prenom: u.firstName || '',
+          telephone: u.phone || '',
+          passwordHash: u.passwordHash || null, // ancien format en clair : synchronisé après sa 1re connexion
+          secretQuestion: u.secretQuestion || '',
+          secretAnswerHash: u.secretAnswerHash || null,
+        })),
+    });
+  });
+
+  app.post('/api/internal/parents/import', async (req, res) => {
+    const { parent: p, mode } = req.body || {};
+    if (!p || !p.email || !p.passwordHash) return deny(res, 400, 'parent invalide');
+    const email = String(p.email).trim().toLowerCase();
+    const release = await deps.lockUserWrites();
+    let cree = null;
+    pingSuspendu = true; // une importation venant du portail ne relance pas une synchronisation
+    try {
+      const users = (await readKv(K.users)) || [];
+      const i = users.findIndex((u) => u && String(u.email || '').toLowerCase() === email);
+      if (mode === 'create') {
+        if (i !== -1) return deny(res, 409, 'email-exists');
+        cree = {
+          id: 'parent-' + Date.now() + '-' + crypto.randomBytes(2).toString('hex'),
+          name: `${clip(p.prenom, 80)} ${clip(p.nom, 80)}`.trim() || email,
+          firstName: clip(p.prenom, 80),
+          lastName: clip(p.nom, 80),
+          email,
+          phone: clip(p.telephone, 40),
+          role: 'parent',
+          passwordHash: String(p.passwordHash),
+          secretQuestion: clip(p.secretQuestion, 200),
+          secretAnswerHash: p.secretAnswerHash ? String(p.secretAnswerHash) : undefined,
+          isDemo: false,
+          syncedFrom: 'infirmerie',
+        };
+        if (!cree.secretAnswerHash) delete cree.secretAnswerHash;
+        users.push(cree);
+      } else if (mode === 'password') {
+        if (i === -1 || users[i].role !== 'parent') return deny(res, 404, 'no-account');
+        users[i].passwordHash = String(p.passwordHash);
+        delete users[i].password;
+        if (p.secretAnswerHash) {
+          users[i].secretAnswerHash = String(p.secretAnswerHash);
+          delete users[i].secretAnswer;
+          if (p.secretQuestion) users[i].secretQuestion = clip(p.secretQuestion, 200);
+        }
+        revokeUserSessions(users[i].id);
+      } else {
+        return deny(res, 400, 'mode invalide');
+      }
+      await saveUsers(users);
+    } finally {
+      pingSuspendu = false;
+      release();
+    }
+    if (cree) {
+      try {
+        await deps.commSendWelcome({ id: cree.id, name: cree.name, firstName: cree.firstName, lastName: cree.lastName });
+      } catch (e) {
+        console.error("[auth] Message d'accueil impossible :", e.message);
+      }
+      console.log(`[parents-communs] compte parent ${email} créé depuis la Fiche Infirmerie`);
+    } else {
+      console.log(`[parents-communs] mot de passe du parent ${email} aligné sur la Fiche Infirmerie`);
+    }
+    res.json({ ok: true });
+  });
 
   // --- connexion ---
   const sessionOut = (user, sess) => ({ ok: true, token: sess.token, expiresAt: sess.expiresAt, user: sanitizeUser(user) });
@@ -1937,7 +2061,7 @@ const WELCOME_KEY = 'cerfa_messages_welcome_v1';
 const WELCOME_DEFAULT_SUBJECT = 'Bienvenue — à lire avant de commencer';
 const WELCOME_DEFAULT_BODY = `Bonjour {prenom},
 
-Bienvenue sur le portail des fiches sanitaires de liaison de l'Ensemble Scolaire Notre Dame des Missions.
+Bienvenue sur le portail des fiches sanitaires de liaison de {etablissement}.
 
 Un seul compte suffit pour toute la famille : ne créez pas un compte par enfant. Pour chaque enfant, cliquez sur le bouton « + Ajouter un enfant » (en haut de votre espace ; « Ajouter mon premier enfant » la première fois) : sa fiche sanitaire est créée dans votre compte, et vous retrouvez toutes vos fiches dans « Mes enfants ».
 
@@ -1965,6 +2089,13 @@ async function welcomeTextMigration() {
   try {
     const c = await readKv(WELCOME_KEY);
     if (!c || typeof c.body !== 'string') return; // aucun texte personnalisé : le nouveau texte par défaut s'applique
+    // build etablissement-central-20261011 : le nom en dur devient la variable {etablissement}
+    const OLD_NAME = "de l'Ensemble Scolaire Notre Dame des Missions.";
+    if (c.body.includes(OLD_NAME)) {
+      c.body = c.body.split(OLD_NAME).join('de {etablissement}.');
+      await writeKv(WELCOME_KEY, { ...c, updatedAt: new Date().toISOString(), updatedBy: 'maj-etablissement-central' });
+      console.log("[accueil] Nom de l'établissement du message d'accueil remplacé par la variable {etablissement}");
+    }
     if (!/créer un compte par enfant|adresse e-mail différente pour chaque compte/.test(c.body)) return; // déjà à jour
     const OLD_P1 = 'Merci de créer un compte par enfant. Chaque enfant a sa propre fiche sanitaire, et la signature d\'un seul responsable légal suffit pour la valider : il n\'est donc pas nécessaire que les deux parents créent un compte ni signent la fiche.';
     const OLD_P2 = 'Si vous avez plusieurs enfants, utilisez une adresse e-mail différente pour chaque compte (une adresse e-mail ne peut servir qu\'à un seul compte).';
@@ -1983,14 +2114,21 @@ async function welcomeTextMigration() {
   }
 }
 
-function commRenderWelcome(text, user) {
+// {etablissement} : nom enregistré de l'établissement (géré depuis la gestion centralisée du portail NDM)
+async function commEstablishmentName() {
+  const n = await readKv('cerfa_establishment_name_v1');
+  return (typeof n === 'string' && n.trim()) || "l'établissement";
+}
+
+function commRenderWelcome(text, user, etablissement) {
   // Seuls firstName / lastName renseignés sont utilisés (jamais de découpage du nom complet :
   // « DUPONT Jean » serait mal salué). Sans prénom : « Bonjour, ».
   const first = commClip(user.firstName || '', 80);
   const last = commClip(user.lastName || '', 80);
   return String(text)
     .replace(/\s*\{prenom\}/g, first ? ' ' + first : '')
-    .replace(/\s*\{nom\}/g, last ? ' ' + last : '');
+    .replace(/\s*\{nom\}/g, last ? ' ' + last : '')
+    .replace(/\{etablissement\}/g, etablissement || "l'établissement");
 }
 
 function commBuildWelcomeThread(user, cfg, now) {
@@ -1998,7 +2136,7 @@ function commBuildWelcomeThread(user, cfg, now) {
     id: commId('t'),
     parentId: user.id,
     parentName: user.name || 'Parent',
-    subject: commRenderWelcome(cfg.subject, user),
+    subject: commRenderWelcome(cfg.subject, user, cfg.etablissement),
     kind: 'welcome',
     createdAt: now,
     lastMessageAt: now,
@@ -2010,7 +2148,7 @@ function commBuildWelcomeThread(user, cfg, now) {
         fromRole: 'admin',
         fromUserId: 'system',
         fromName: 'Administration',
-        body: commRenderWelcome(cfg.body, user),
+        body: commRenderWelcome(cfg.body, user, cfg.etablissement),
         createdAt: now,
       },
     ],
@@ -2020,7 +2158,7 @@ function commBuildWelcomeThread(user, cfg, now) {
 // Crée le message d'accueil d'un parent (une seule fois par compte). Retourne true si créé.
 async function commSendWelcome(user) {
   return withCommLock(async () => {
-    const cfg = await commGetWelcomeConfig();
+    const cfg = { ...(await commGetWelcomeConfig()), etablissement: await commEstablishmentName() };
     if (!cfg.enabled) return false;
     const threads = (await readKv(MESSAGES_KEY)) || [];
     if (threads.some((t) => t.parentId === user.id && t.kind === 'welcome')) return false;
@@ -2116,7 +2254,7 @@ app.post('/api/messages/welcome/send-existing', async (req, res) => {
   try {
     await withCommLock(async () => {
       if (!(await commRequireAdmin(req.body && req.body.userId, res))) return;
-      const cfg = await commGetWelcomeConfig();
+      const cfg = { ...(await commGetWelcomeConfig()), etablissement: await commEstablishmentName() };
       const users = (await readKv(USERS_KEY)) || [];
       const threads = (await readKv(MESSAGES_KEY)) || [];
       const already = new Set(threads.filter((t) => t.kind === 'welcome').map((t) => t.parentId));
@@ -16688,6 +16826,9 @@ export const StartupAuthGate: React.FC<StartupAuthGateProps> = ({
 
                 {/* Primary option to create account for new parents */}
                 <div className="pt-3 border-t border-slate-100 text-center">
+                  <p className="text-[11px] text-blue-800 bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5 mb-2">
+                    Un seul compte pour la Fiche Sanitaire et la Fiche Infirmerie : si vous en avez déjà un, connectez-vous avec la même adresse e-mail et le même mot de passe.
+                  </p>
                   <p className="text-xs text-slate-600 mb-2">
                     Première fois sur le portail sanitaire ?
                   </p>
@@ -17955,7 +18096,8 @@ export const WelcomeSettings: React.FC<{ adminId: string }> = ({ adminId }) => {
       <p className="text-xs text-slate-500">
         Ce message est déposé automatiquement dans la messagerie de chaque parent qui crée un compte. Vous pouvez utiliser{' '}
         <code className="bg-slate-200 px-1 rounded">{'{prenom}'}</code> et <code className="bg-slate-200 px-1 rounded">{'{nom}'}</code> : ils sont remplacés par
-        le prénom et le nom du parent.
+        le prénom et le nom du parent, et <code className="bg-slate-200 px-1 rounded">{'{etablissement}'}</code> : remplacé par le nom de
+        l'établissement enregistré.
       </p>
       <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
         <input type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} />
@@ -23052,14 +23194,14 @@ data/
 ```markdown
 # CAHIER DES CHARGES & REGISTRE DE CONFORMITÉ RGPD
 ## Traitement Informatisé des Fiches d'Infirmerie et Dossiers Médicaux Scolaires
-### Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+### {{ETABLISSEMENT}}
 
 ---
 
 **Référence document :** CDC-RGPD-INFIRMERIE-NDM-2026-V1  
 **Date d'entrée en vigueur :** Rentrée Scolaire 2026  
 **Dernière révision :** Septembre 2026  
-**Établissement :** Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre  
+**Établissement :** {{ETABLISSEMENT}}  
 **Statut :** Établissement Catholique d'Enseignement sous contrat d'association avec l'État  
 **Responsable de traitement :** Chef d'Établissement / Direction Générale  
 **Service utilisateur :** Service Infirmerie Scolaire  
@@ -23069,7 +23211,7 @@ data/
 
 ## SOMMAIRE EXÉCUTIF
 
-Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre avec :
+Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'établissement {{ETABLISSEMENT}} avec :
 1. Le **Règlement Général sur la Protection des Données (RGPD - Règlement UE 2016/679)** ;
 2. La **Loi n° 78-17 du 6 janvier 1978 modifiée (Loi Informatique et Libertés)** ;
 3. Le **Code de la Santé Publique** (notamment articles L. 1110-4 sur le secret médical et L. 3111-2 sur les obligations vaccinales) ;
@@ -23083,7 +23225,7 @@ Le présent cahier des charges formalise la conformité stricte de l'application
 | Rubrique | Description officielle |
 | :--- | :--- |
 | **Nom du traitement** | Gestion dématérialisée des fiches de santé scolaires et suivi infirmerie |
-| **Responsable du traitement** | Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre |
+| **Responsable du traitement** | {{ETABLISSEMENT}} |
 | **Finalité principale** | Prise en charge sanitaire, gestion des urgences médicales et suivi de l'obligation vaccinale des élèves scolarisés |
 | **Finalités secondaires** | - Gestion des protocoles d'accueil individualisé (PAI) pour allergies et maladies chroniques<br>- Déclaration d'urgence auprès des services de secours (SAMU 15, Pompiers 18)<br>- Archivage légal de l'autorisation parentale de soins et d'hospitalisation |
 | **Catégories de personnes** | - Élèves mineurs scolarisés (Maternelle, Primaire, Collège, Lycée)<br>- Représentants légaux / Parents d'élèves<br>- Professionnels de santé référents (médecin traitant, spécialiste) |
@@ -23237,7 +23379,7 @@ En cas d'incident de sécurité (tentative d'intrusion, altération ou indisponi
 
 Fait à Charenton-le-Pont, le 17 septembre 2026.
 
-**Pour l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre :**  
+**Pour l'établissement {{ETABLISSEMENT}} :**  
 *La Direction de l'Établissement & Le Référent Protection des Données (DPO)*  
 Document officiel annexé au Registre des Activités de Traitement de l'Établissement.
 ```
@@ -23249,14 +23391,14 @@ Document officiel annexé au Registre des Activités de Traitement de l'Établis
 ```markdown
 # CAHIER DES CHARGES & REGISTRE DE CONFORMITÉ RGPD
 ## Traitement Informatisé des Fiches d'Infirmerie et Dossiers Médicaux Scolaires
-### Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+### {{ETABLISSEMENT}}
 
 ---
 
 **Référence document :** CDC-RGPD-INFIRMERIE-NDM-2026-V1  
 **Date d'entrée en vigueur :** Rentrée Scolaire 2026  
 **Dernière révision :** Septembre 2026  
-**Établissement :** Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre  
+**Établissement :** {{ETABLISSEMENT}}  
 **Statut :** Établissement Catholique d'Enseignement sous contrat d'association avec l'État  
 **Responsable de traitement :** Chef d'Établissement / Direction Générale  
 **Service utilisateur :** Service Infirmerie Scolaire  
@@ -23266,7 +23408,7 @@ Document officiel annexé au Registre des Activités de Traitement de l'Établis
 
 ## SOMMAIRE EXÉCUTIF
 
-Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre avec :
+Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'établissement {{ETABLISSEMENT}} avec :
 1. Le **Règlement Général sur la Protection des Données (RGPD - Règlement UE 2016/679)** ;
 2. La **Loi n° 78-17 du 6 janvier 1978 modifiée (Loi Informatique et Libertés)** ;
 3. Le **Code de la Santé Publique** (notamment articles L. 1110-4 sur le secret médical et L. 3111-2 sur les obligations vaccinales) ;
@@ -23280,7 +23422,7 @@ Le présent cahier des charges formalise la conformité stricte de l'application
 | Rubrique | Description officielle |
 | :--- | :--- |
 | **Nom du traitement** | Gestion dématérialisée des fiches de santé scolaires et suivi infirmerie |
-| **Responsable du traitement** | Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre |
+| **Responsable du traitement** | {{ETABLISSEMENT}} |
 | **Finalité principale** | Prise en charge sanitaire, gestion des urgences médicales et suivi de l'obligation vaccinale des élèves scolarisés |
 | **Finalités secondaires** | - Gestion des protocoles d'accueil individualisé (PAI) pour allergies et maladies chroniques<br>- Déclaration d'urgence auprès des services de secours (SAMU 15, Pompiers 18)<br>- Archivage légal de l'autorisation parentale de soins et d'hospitalisation |
 | **Catégories de personnes** | - Élèves mineurs scolarisés (Maternelle, Primaire, Collège, Lycée)<br>- Représentants légaux / Parents d'élèves<br>- Professionnels de santé référents (médecin traitant, spécialiste) |
@@ -23434,7 +23576,7 @@ En cas d'incident de sécurité (tentative d'intrusion, altération ou indisponi
 
 Fait à Charenton-le-Pont, le 17 septembre 2026.
 
-**Pour l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre :**  
+**Pour l'établissement {{ETABLISSEMENT}} :**  
 *La Direction de l'Établissement & Le Référent Protection des Données (DPO)*  
 Document officiel annexé au Registre des Activités de Traitement de l'Établissement.
 ```
@@ -23593,14 +23735,14 @@ exec "$@"
 ```markdown
 # CAHIER DES CHARGES & REGISTRE DE CONFORMITÉ RGPD
 ## Traitement Informatisé des Fiches d'Infirmerie et Dossiers Médicaux Scolaires
-### Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+### {{ETABLISSEMENT}}
 
 ---
 
 **Référence document :** CDC-RGPD-INFIRMERIE-NDM-2026-V1  
 **Date d'entrée en vigueur :** Rentrée Scolaire 2026  
 **Dernière révision :** Septembre 2026  
-**Établissement :** Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre  
+**Établissement :** {{ETABLISSEMENT}}  
 **Statut :** Établissement Catholique d'Enseignement sous contrat d'association avec l'État  
 **Responsable de traitement :** Chef d'Établissement / Direction Générale  
 **Service utilisateur :** Service Infirmerie Scolaire  
@@ -23610,7 +23752,7 @@ exec "$@"
 
 ## SOMMAIRE EXÉCUTIF
 
-Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre avec :
+Le présent cahier des charges formalise la conformité stricte de l'application **« Fiche Infirmerie Numérique »** de l'établissement {{ETABLISSEMENT}} avec :
 1. Le **Règlement Général sur la Protection des Données (RGPD - Règlement UE 2016/679)** ;
 2. La **Loi n° 78-17 du 6 janvier 1978 modifiée (Loi Informatique et Libertés)** ;
 3. Le **Code de la Santé Publique** (notamment articles L. 1110-4 sur le secret médical et L. 3111-2 sur les obligations vaccinales) ;
@@ -23624,7 +23766,7 @@ Le présent cahier des charges formalise la conformité stricte de l'application
 | Rubrique | Description officielle |
 | :--- | :--- |
 | **Nom du traitement** | Gestion dématérialisée des fiches de santé scolaires et suivi infirmerie |
-| **Responsable du traitement** | Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre |
+| **Responsable du traitement** | {{ETABLISSEMENT}} |
 | **Finalité principale** | Prise en charge sanitaire, gestion des urgences médicales et suivi de l'obligation vaccinale des élèves scolarisés |
 | **Finalités secondaires** | - Gestion des protocoles d'accueil individualisé (PAI) pour allergies et maladies chroniques<br>- Déclaration d'urgence auprès des services de secours (SAMU 15, Pompiers 18)<br>- Archivage légal de l'autorisation parentale de soins et d'hospitalisation |
 | **Catégories de personnes** | - Élèves mineurs scolarisés (Maternelle, Primaire, Collège, Lycée)<br>- Représentants légaux / Parents d'élèves<br>- Professionnels de santé référents (médecin traitant, spécialiste) |
@@ -23778,7 +23920,7 @@ En cas d'incident de sécurité (tentative d'intrusion, altération ou indisponi
 
 Fait à Charenton-le-Pont, le 17 septembre 2026.
 
-**Pour l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre :**  
+**Pour l'établissement {{ETABLISSEMENT}} :**  
 *La Direction de l'Établissement & Le Référent Protection des Données (DPO)*  
 Document officiel annexé au Registre des Activités de Traitement de l'Établissement.
 ```
@@ -24058,7 +24200,8 @@ interface SchoolBranding {
 }
 
 const DEFAULT_BRANDING: SchoolBranding = {
-  schoolName: 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE',
+  // Nom initial : ETABLISSEMENT_NOM du .env (ensuite : gestion centralisée du portail NDM ou « Identité & Logo »)
+  schoolName: (process.env.ETABLISSEMENT_NOM || '').trim() || 'Ensemble Scolaire Notre-Dame des Missions',
   subTitle: "Sous-contrat d'Association avec l'État",
   logoDataUrl: '',
 };
@@ -24441,6 +24584,86 @@ function verifyPassword(password: string, hash: string, salt: string): boolean {
   return calculated === hash;
 }
 
+// ----------------------------------------------------------------------------
+// Comptes parents communs avec la Fiche Sanitaire (build parents-communs-20261011)
+// Un compte parent créé dans l'une des deux applications est recopié dans l'autre par le portail NDM,
+// SANS mot de passe en clair : les empreintes sont échangées sous forme « portable » :
+//   pbkdf2-sha512$100000$<sel>$<hex>   (mot de passe Infirmerie)
+//   pbkdf2a-sha256$50000$<sel>$<hex>   (réponse secrète Infirmerie)
+//   scrypt$N$r$p$<sel b64>$<clé b64>   (format Fiche Sanitaire, vérifié ici tel quel)
+// ----------------------------------------------------------------------------
+function verifyScrypt(plain: string, stored: string): boolean {
+  try {
+    const [, N, r, p, salt, key] = stored.split('$');
+    const exp = Buffer.from(key, 'base64');
+    const got = crypto.scryptSync(plain, Buffer.from(salt, 'base64'), exp.length, { N: Number(N), r: Number(r), p: Number(p), maxmem: 64 * 1024 * 1024 });
+    return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+  } catch {
+    return false;
+  }
+}
+
+function verifyPortable(plain: string, stored: string, kind: 'password' | 'answer'): boolean {
+  if (stored.startsWith('scrypt$')) {
+    // Fiche Sanitaire : réponse secrète = minuscules + espaces retirés aux extrémités
+    return verifyScrypt(kind === 'answer' ? plain.trim().toLowerCase() : plain, stored);
+  }
+  const [k, iter, salt, hex] = stored.split('$');
+  try {
+    const exp = Buffer.from(hex, 'hex');
+    if (k === 'pbkdf2-sha512') {
+      const got = crypto.pbkdf2Sync(plain, salt, Number(iter), 64, 'sha512');
+      return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+    }
+    if (k === 'pbkdf2a-sha256') {
+      const norm = plain.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const got = crypto.pbkdf2Sync(norm, salt, Number(iter), 32, 'sha256');
+      return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+    }
+  } catch {
+    /* format invalide */
+  }
+  return false;
+}
+
+function verifyParentPassword(p: ParentAccount, password: string): boolean {
+  if (p.hash && p.hash.includes('$')) return verifyPortable(password, p.hash, 'password');
+  return verifyPassword(password, p.hash, p.salt);
+}
+
+function verifyParentAnswer(p: ParentAccount, answer: string): boolean {
+  if (p.secretAnswerHash && p.secretAnswerHash.includes('$')) return verifyPortable(answer, p.secretAnswerHash, 'answer');
+  const a = Buffer.from(hashSecretAnswer(answer, p.salt), 'hex');
+  const b = Buffer.from(p.secretAnswerHash || '', 'hex');
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
+/** Empreintes au format portable (pour la synchronisation) */
+function portablePassword(p: ParentAccount): string | null {
+  if (!p.hash) return null;
+  return p.hash.includes('$') ? p.hash : `pbkdf2-sha512$100000$${p.salt}$${p.hash}`;
+}
+function portableAnswer(p: ParentAccount): string | null {
+  if (!p.secretAnswerHash) return null;
+  return p.secretAnswerHash.includes('$') ? p.secretAnswerHash : `pbkdf2a-sha256$50000$${p.salt}$${p.secretAnswerHash}`;
+}
+
+// Prévient le portail NDM qu'un compte a changé (regroupé sur 1,5 s, sans donnée)
+let pingTimer: NodeJS.Timeout | null = null;
+let pingSuspendu = false;
+function pingSyncParents() {
+  const secret = process.env.NDM_INTERNAL_SECRET || '';
+  if (pingSuspendu || secret.length < 24 || pingTimer) return;
+  pingTimer = setTimeout(() => {
+    pingTimer = null;
+    fetch((process.env.NDM_PORTAIL_INTERNAL_URL || 'http://portail:3020') + '/internal/parents/sync', {
+      method: 'POST',
+      headers: { 'X-Ndm-Internal': secret },
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  }, 1500);
+}
+
 function hashSecretAnswer(answer: string, salt: string): string {
   const normalized = answer.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   return crypto.pbkdf2Sync(normalized, salt, 50000, 32, 'sha256').toString('hex');
@@ -24544,6 +24767,7 @@ function getAccounts(): AccountStore {
 function saveAccounts(store: AccountStore) {
   const encrypted = encryptData(store);
   fs.writeFileSync(ACCOUNTS_ENC_FILE, encrypted, 'utf-8');
+  pingSyncParents();
 }
 
 // Initialise accounts on startup
@@ -24654,16 +24878,67 @@ app.post('/api/branding', (req, res) => {
       logoDataUrl: logoDataUrl !== undefined ? logoDataUrl : current.logoDataUrl,
     };
     saveSchoolBranding(updated);
+    if (updated.schoolName !== current.schoolName) renommerDansCahier(current.schoolName, updated.schoolName);
     res.json({ success: true, branding: updated, message: 'Identité et logo mis à jour avec succès.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// ---------------------------------------------------------------------------
+// Nom de l'établissement dans le cahier des charges RGPD (build etablissement-central-20261011)
+// Le modèle contient la variable {{ETABLISSEMENT}}, remplacée à l'affichage par le nom enregistré.
+// Une version modifiée par l'administration (texte concret) est mise à jour lors d'un changement de nom.
+// ---------------------------------------------------------------------------
+const CAHIER_VAR = '{{ETABLISSEMENT}}';
+const CAHIER_FILES = () => [path.join(process.cwd(), 'CAHIER_DES_CHARGES_RGPD.md'), path.join(process.cwd(), 'public', 'CAHIER_DES_CHARGES_RGPD.md')];
+
+function renderCahier(md: string): string {
+  return String(md || '').split(CAHIER_VAR).join(getSchoolBranding().schoolName);
+}
+
+function renommerDansCahier(ancien: string, nouveau: string) {
+  if (!ancien || !nouveau || ancien === nouveau) return;
+  for (const f of CAHIER_FILES()) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const md = fs.readFileSync(f, 'utf-8');
+      if (md.includes(ancien)) {
+        fs.writeFileSync(f, md.split(ancien).join(nouveau), 'utf-8');
+        console.log(`[etablissement] Cahier des charges RGPD : « ${ancien} » remplacé par « ${nouveau} » (${path.basename(path.dirname(f))})`);
+      }
+    } catch (e: any) {
+      console.error('[etablissement] Cahier des charges non mis à jour :', e.message);
+    }
+  }
+}
+
+// Installation existante : l'ancien nom écrit en dur dans le cahier devient la variable (une seule fois)
+(function migrerCahier() {
+  const ANCIEN = 'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre';
+  for (const f of CAHIER_FILES()) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const md = fs.readFileSync(f, 'utf-8');
+      if (!md.includes(ANCIEN)) continue;
+      const neuf = md
+        .split(`de l'${ANCIEN}`).join(`de l'établissement ${CAHIER_VAR}`)
+        .split(`Pour l'${ANCIEN}`).join(`Pour l'établissement ${CAHIER_VAR}`)
+        .split(ANCIEN).join(CAHIER_VAR);
+      fs.writeFileSync(f, neuf, 'utf-8');
+      console.log('[etablissement] Cahier des charges RGPD : nom en dur remplacé par la variable', CAHIER_VAR);
+    } catch (e: any) {
+      console.error('[etablissement] Migration du cahier impossible :', e.message);
+    }
+  }
+})();
+
 // Reset branding to default
 app.post('/api/branding/reset', (req, res) => {
   try {
+    const avant = getSchoolBranding().schoolName;
     saveSchoolBranding(DEFAULT_BRANDING);
+    renommerDansCahier(avant, DEFAULT_BRANDING.schoolName);
     res.json({ success: true, branding: DEFAULT_BRANDING, message: 'Identité réinitialisée par défaut.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -25048,7 +25323,7 @@ app.post('/api/auth/parent/register', (req, res) => {
     const store = getAccounts();
     const existing = store.parents.find((p) => p.email === cleanEmail);
     if (existing) {
-      return res.status(409).json({ success: false, error: 'Un compte parent existe déjà avec cette adresse email.' });
+      return res.status(409).json({ success: false, error: "Un compte parent existe déjà avec cette adresse email (le compte est commun à la Fiche Sanitaire et à la Fiche Infirmerie) : connectez-vous avec le même mot de passe, ou utilisez « Mot de passe oublié »." });
     }
 
     const { hash, salt } = hashPassword(password);
@@ -25108,7 +25383,7 @@ app.post('/api/auth/parent/login', (req, res) => {
       return res.status(401).json({ success: false, error: 'Email ou mot de passe incorrect.' });
     }
 
-    const isValid = verifyPassword(password, parent.hash, parent.salt);
+    const isValid = verifyParentPassword(parent, password);
     if (!isValid) {
       recordFailure(req);
       return res.status(401).json({ success: false, error: 'Email ou mot de passe incorrect.' });
@@ -25180,8 +25455,7 @@ app.post('/api/auth/parent/forgot-password/reset', (req, res) => {
     if (locked) {
       return res.status(429).json({ success: false, error: `Trop d'essais infructueux. Réessayez dans ${locked} min.` });
     }
-    const testAnswerHash = hashSecretAnswer(secretAnswer, parent.salt);
-    if (testAnswerHash !== parent.secretAnswerHash) {
+    if (!verifyParentAnswer(parent, secretAnswer)) {
       recordFailure(req);
       return res.status(401).json({ success: false, error: 'La réponse à la question secrète est incorrecte.' });
     }
@@ -25376,15 +25650,79 @@ app.post('/api/internal/set-password', (req, res) => {
       if (!p) return res.status(404).json({ success: false, error: 'Compte parent introuvable.' });
       // La réponse secrète est hachée avec le sel du mot de passe : elle est conservée telle quelle
       // en réutilisant l'ancien sel pour le nouveau mot de passe.
-      p.hash = hashPassword(password, p.salt).hash;
+      const sel = p.salt || crypto.randomBytes(16).toString('hex');
+      p.hash = hashPassword(password, sel).hash;
+      p.salt = sel;
       saveAccounts(store);
       revokeSessionsOf('parent', p.id);
       console.log(`[securite] Mot de passe du parent « ${p.email} » redéfini par le portail NDM`);
-      return res.json({ success: true, message: `Mot de passe de ${p.prenom} ${p.nom} (${p.email}) modifié.` });
+      return res.json({ success: true, email: p.email, message: `Mot de passe de ${p.prenom} ${p.nom} (${p.email}) modifié.` });
     }
     return res.status(400).json({ success: false, error: 'Type de compte inconnu.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7ter. COMPTES PARENTS COMMUNS (synchronisation orchestrée par le portail NDM)
+app.get('/api/internal/parents', (req, res) => {
+  const store = getAccounts();
+  res.json({
+    parents: store.parents.map((p) => ({
+      email: String(p.email || '').trim().toLowerCase(),
+      nom: p.nom,
+      prenom: p.prenom,
+      telephone: p.telephone,
+      passwordHash: portablePassword(p),
+      secretQuestion: p.secretQuestion,
+      secretAnswerHash: portableAnswer(p),
+    })),
+  });
+});
+
+app.post('/api/internal/parents/import', (req, res) => {
+  const { parent: src, mode } = req.body || {};
+  if (!src || !src.email || !src.passwordHash) return res.status(400).json({ success: false, error: 'parent invalide' });
+  const email = String(src.email).trim().toLowerCase();
+  pingSuspendu = true; // une importation venant du portail ne relance pas une synchronisation
+  try {
+    const store = getAccounts();
+    const existant = store.parents.find((p) => p.email === email);
+    if (mode === 'create') {
+      if (existant) return res.status(409).json({ success: false, error: 'email-exists' });
+      store.parents.push({
+        id: `parent-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        email,
+        nom: String(src.nom || '').trim().toUpperCase() || email,
+        prenom: String(src.prenom || '').trim(),
+        telephone: String(src.telephone || '').trim(),
+        hash: String(src.passwordHash),
+        salt: crypto.randomBytes(16).toString('hex'),
+        secretQuestion: src.secretQuestion || 'Quel est le nom de votre premier animal de compagnie ?',
+        secretAnswerHash: src.secretAnswerHash ? String(src.secretAnswerHash) : '',
+        createdAt: new Date().toISOString(),
+      } as ParentAccount);
+      saveAccounts(store);
+      console.log(`[parents-communs] compte parent ${email} créé depuis la Fiche Sanitaire`);
+      return res.json({ success: true });
+    }
+    if (mode === 'password') {
+      if (!existant) return res.status(404).json({ success: false, error: 'no-account' });
+      existant.hash = String(src.passwordHash);
+      if (src.secretAnswerHash) {
+        existant.secretAnswerHash = String(src.secretAnswerHash);
+        if (src.secretQuestion) existant.secretQuestion = src.secretQuestion;
+      }
+      saveAccounts(store);
+      revokeSessionsOf('parent', existant.id);
+      console.log(`[parents-communs] mot de passe du parent ${email} aligné sur la Fiche Sanitaire`);
+      return res.json({ success: true });
+    }
+    return res.status(400).json({ success: false, error: 'mode invalide' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    pingSuspendu = false;
   }
 });
 
@@ -25688,15 +26026,12 @@ app.get('/api/stats', (req, res) => {
 
 // Serve RGPD specifications document
 app.get('/CAHIER_DES_CHARGES_RGPD.md', (req, res) => {
-  const filePath = path.join(process.cwd(), 'CAHIER_DES_CHARGES_RGPD.md');
-  if (fs.existsSync(filePath)) {
-    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    return res.sendFile(filePath);
-  }
-  const publicPath = path.join(process.cwd(), 'public', 'CAHIER_DES_CHARGES_RGPD.md');
-  if (fs.existsSync(publicPath)) {
-    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    return res.sendFile(publicPath);
+  // Le nom de l'établissement est inséré à la volée (variable {{ETABLISSEMENT}})
+  for (const f of CAHIER_FILES()) {
+    if (fs.existsSync(f)) {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      return res.send(renderCahier(fs.readFileSync(f, 'utf-8')));
+    }
   }
   res.status(404).send('Document introuvable');
 });
@@ -25725,7 +26060,9 @@ app.get('/api/rgpd/cahier-des-charges', (req, res) => {
       }
     }
 
-    return res.json({ success: true, markdown, config });
+    // Nom de l'établissement : toujours celui de l'identité enregistrée (gestion centralisée)
+    if (config && typeof config === 'object') (config as any).etablissement = getSchoolBranding().schoolName;
+    return res.json({ success: true, markdown: renderCahier(markdown), config });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -25781,7 +26118,7 @@ app.post('/api/rgpd/cahier-des-charges/reset', (req, res) => {
       } catch {}
     }
 
-    return res.json({ success: true, markdown: defaultContent, message: 'Réinitialisation au modèle officiel effectuée' });
+    return res.json({ success: true, markdown: renderCahier(defaultContent), message: 'Réinitialisation au modèle officiel effectuée' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -25829,6 +26166,7 @@ import { ParentAuthCard } from './components/ParentAuthCard';
 import { AdminLoginCard } from './components/AdminLoginCard';
 import { generateFichePDF, generateCarnetPDF } from './utils/pdfGenerator';
 import { clearSession, SESSION_EXPIRED_EVENT } from './utils/apiAuth';
+import { setSchoolName, NOM_PAR_DEFAUT } from './utils/branding';
 import {
   User,
   HeartPulse,
@@ -25859,7 +26197,7 @@ export default function App() {
   const [fichePdfBlob, setFichePdfBlob] = useState<Blob | null>(null);
   const [carnetPdfBlob, setCarnetPdfBlob] = useState<Blob | null>(null);
   const [branding, setBranding] = useState<SchoolBranding>({
-    schoolName: 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE',
+    schoolName: NOM_PAR_DEFAUT,
     subTitle: "Sous-contrat d'Association avec l'État",
     logoDataUrl: '',
   });
@@ -25871,6 +26209,7 @@ export default function App() {
       .then((data) => {
         if (data.success && data.branding) {
           setBranding(data.branding);
+          setSchoolName(data.branding.schoolName);
         }
       })
       .catch(() => {});
@@ -26329,7 +26668,10 @@ export default function App() {
               }}
               adminUser={adminProfile}
               branding={branding}
-              onBrandingChange={(newB) => setBranding(newB)}
+              onBrandingChange={(newB) => {
+                setBranding(newB);
+                setSchoolName(newB.schoolName);
+              }}
             />
           )
         ) : (
@@ -26489,7 +26831,7 @@ export default function App() {
       <footer className="bg-white border-t border-slate-200 mt-12 py-6 text-center text-xs text-slate-500">
         <div className="max-w-5xl mx-auto px-4 space-y-1">
           <p className="font-semibold text-slate-700">
-            Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre • Service Médical & Infirmerie
+            {branding.schoolName} • Service Médical & Infirmerie
           </p>
           <p>
             Plateforme conforme RGPD • Archivage sécurisé • Fiches infirmerie & Carnets de vaccinations numérisés
@@ -26515,6 +26857,7 @@ import { EditStudentClassModal } from './EditStudentClassModal';
 import { RgpdComplianceView } from './RgpdComplianceView';
 import { ChangeStaffPasswordModal } from './ChangeStaffPasswordModal';
 import { withStaffToken } from '../utils/apiAuth';
+import { useSchoolName } from '../utils/branding';
 import { SchoolBrandingModal } from './SchoolBrandingModal';
 import { SchoolBranding } from '../types';
 import {
@@ -26564,6 +26907,7 @@ export function AdminDashboard({
   branding,
   onBrandingChange,
 }: AdminDashboardProps) {
+  const nomEtab = useSchoolName();
   const [fiches, setFiches] = useState<FicheInfirmerieData[]>([]);
   const [classesList, setClassesList] = useState<string[]>(SCHOOL_CLASSES);
   const [loading, setLoading] = useState(true);
@@ -26986,7 +27330,7 @@ export function AdminDashboard({
               </h1>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre • Année {schoolYear}
+              {nomEtab} • Année {schoolYear}
             </p>
           </div>
 
@@ -28042,6 +28386,7 @@ export function AdminDashboard({
 <!-- SCRIPT-START:apps/infirmerie/src/components/AdminLoginCard.tsx -->
 ```tsx
 import { useState } from 'react';
+import { useSchoolName } from '../utils/branding';
 import {
   Lock,
   Shield,
@@ -28061,6 +28406,7 @@ interface AdminLoginCardProps {
 }
 
 export function AdminLoginCard({ onSuccess, onBackToParent }: AdminLoginCardProps) {
+  const nomEtab = useSchoolName();
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -28107,7 +28453,7 @@ export function AdminLoginCard({ onSuccess, onBackToParent }: AdminLoginCardProp
           <div className="flex justify-center mb-3">
             <img
               src="/logo.svg"
-              alt="Logo Notre-Dame des Missions - Saint-Pierre"
+              alt={`Logo ${nomEtab}`}
               className="h-16 w-auto object-contain bg-white/10 p-2 rounded-xl backdrop-blur-xs border border-white/20"
             />
           </div>
@@ -28119,7 +28465,7 @@ export function AdminLoginCard({ onSuccess, onBackToParent }: AdminLoginCardProp
             Accès Sécurisé Administration
           </h2>
           <p className="text-xs text-slate-300 mt-1">
-            Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+            {nomEtab}
           </p>
         </div>
 
@@ -28250,6 +28596,7 @@ export function AdminLoginCard({ onSuccess, onBackToParent }: AdminLoginCardProp
 ```tsx
 import { FicheInfirmerieData } from '../types';
 import { SignaturePad } from './SignaturePad';
+import { useSchoolName } from '../utils/branding';
 import { FileCheck, Shield, CheckCircle2 } from 'lucide-react';
 
 interface AuthorizationSectionProps {
@@ -28261,6 +28608,7 @@ interface AuthorizationSectionProps {
 }
 
 export function AuthorizationSection({ data, onChange, onNext, onPrev, errors }: AuthorizationSectionProps) {
+  const nomEtab = useSchoolName();
   const updateAuth = (field: keyof FicheInfirmerieData['autorisationParentale'], value: any) => {
     onChange((prev) => ({
       ...prev,
@@ -28290,7 +28638,7 @@ export function AuthorizationSection({ data, onChange, onNext, onPrev, errors }:
             </h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Reprise intégrale du texte officiel d'autorisation de l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre.
+            Reprise intégrale du texte officiel d'autorisation de l'établissement ({nomEtab}).
           </p>
         </div>
 
@@ -28374,7 +28722,7 @@ export function AuthorizationSection({ data, onChange, onNext, onPrev, errors }:
             <div className="flex items-start gap-2.5">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-900 mt-2 shrink-0"></span>
               <p>
-                <strong>L'École Notre-Dame des Missions-St-Pierre</strong> à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.
+                <strong>{nomEtab}</strong> à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.
               </p>
             </div>
 
@@ -29037,6 +29385,7 @@ import { getFicheFileName, getCarnetFileName, formatClassDirectory } from '../ut
 import { CheckCircle2, Download, Cloud, Mail, FileText, ArrowRight, ShieldCheck, RefreshCw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useEffect } from 'react';
+import { useSchoolName } from '../utils/branding';
 
 interface ConfirmationSuccessProps {
   data: FicheInfirmerieData;
@@ -29053,6 +29402,7 @@ export function ConfirmationSuccess({
   onReset,
   onGoToAdmin,
 }: ConfirmationSuccessProps) {
+  const nomEtab = useSchoolName();
   useEffect(() => {
     // Launch celebratory confetti
     confetti({
@@ -29178,7 +29528,7 @@ export function ConfirmationSuccess({
           </p>
           <p className="pt-2 text-slate-500">
             Cordialement,<br />
-            <strong>Ensemble scolaire Notre-Dame des Missions – Saint-Pierre</strong>
+            <strong>{nomEtab}</strong>
           </p>
         </div>
       </div>
@@ -29332,6 +29682,7 @@ export function EditStudentClassModal({
 <!-- SCRIPT-START:apps/infirmerie/src/components/FicheDocumentPreview.tsx -->
 ```tsx
 import { useState } from 'react';
+import { useSchoolName } from '../utils/branding';
 import { FicheInfirmerieData } from '../types';
 import { generateFichePDF, getFicheFileName, generateCarnetPDF, getCarnetFileName } from '../utils/pdfGenerator';
 import {
@@ -29365,6 +29716,7 @@ export function FicheDocumentPreview({
   initialTab = 'fiche',
   onClose,
 }: FicheDocumentPreviewProps) {
+  const nomEtab = useSchoolName();
   const [activeView, setActiveView] = useState<'fiche' | 'carnet' | 'pdf_raw'>(initialTab);
   const [downloading, setDownloading] = useState(false);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
@@ -29541,12 +29893,12 @@ export function FicheDocumentPreview({
                 <div className="flex items-center gap-4">
                   <img
                     src="/logo.svg"
-                    alt="Logo Notre-Dame des Missions - Saint-Pierre"
+                    alt={`Logo ${nomEtab}`}
                     className="w-14 h-16 object-contain shrink-0"
                   />
                   <div className="text-left space-y-0.5">
                     <h3 className="font-bold text-sm sm:text-base text-blue-950 uppercase tracking-wide">
-                      Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+                      {nomEtab}
                     </h3>
                     <p className="text-[11px] text-slate-500">
                       Établissement Catholique d'Enseignement • Sous-contrat d'Association avec l'État • Service Infirmerie
@@ -29874,6 +30226,7 @@ export function FicheDocumentPreview({
 
 <!-- SCRIPT-START:apps/infirmerie/src/components/Header.tsx -->
 ```tsx
+import { getSchoolName } from '../utils/branding';
 import { Shield, School, LayoutDashboard, FileText, Lock, LogOut, UserCheck } from 'lucide-react';
 import { ParentProfile, SchoolBranding } from '../types';
 
@@ -29904,7 +30257,7 @@ export function Header({
   onAdminLogout,
   branding,
 }: HeaderProps) {
-  const schoolName = branding?.schoolName || 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE';
+  const schoolName = branding?.schoolName || getSchoolName();
   const subTitle = branding?.subTitle || "Sous-contrat d'Association avec l'État";
   const logoSrc = branding?.logoDataUrl && branding.logoDataUrl.trim() ? branding.logoDataUrl : '/logo.svg';
 
@@ -30375,6 +30728,7 @@ export function HealthFormSection({ data, onChange, onNext, onPrev, errors }: He
 <!-- SCRIPT-START:apps/infirmerie/src/components/ParentAuthCard.tsx -->
 ```tsx
 import { useState } from 'react';
+import { useSchoolName } from '../utils/branding';
 import { ParentProfile, SECRET_QUESTIONS } from '../types';
 import {
   Lock,
@@ -30397,6 +30751,7 @@ interface ParentAuthCardProps {
 }
 
 export function ParentAuthCard({ onSuccess, onSwitchToAdmin }: ParentAuthCardProps) {
+  const nomEtab = useSchoolName();
   const [tab, setTab] = useState<'login' | 'register' | 'forgot'>('login');
 
   // Login form
@@ -30604,15 +30959,18 @@ export function ParentAuthCard({ onSuccess, onSwitchToAdmin }: ParentAuthCardPro
           <div className="flex justify-center mb-3">
             <img
               src="/logo.svg"
-              alt="Logo Notre-Dame des Missions - Saint-Pierre"
+              alt={`Logo ${nomEtab}`}
               className="h-16 w-auto object-contain bg-white/10 p-2 rounded-xl backdrop-blur-xs border border-white/20"
             />
           </div>
           <h2 className="text-xl font-bold tracking-tight text-white uppercase">
-            Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre
+            {nomEtab}
           </h2>
           <p className="text-xs text-blue-200 mt-1">
             Service Infirmerie • Portail d'authentification des familles
+          </p>
+          <p className="text-[11px] text-blue-100/90 mt-2 bg-white/10 rounded-lg px-3 py-1.5 inline-block">
+            Un seul compte pour la Fiche Infirmerie et la Fiche Sanitaire : mêmes identifiant et mot de passe.
           </p>
 
           <div className="mt-4 inline-flex items-center gap-1.5 bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-[11px] px-3 py-1 rounded-full font-medium">
@@ -31398,15 +31756,21 @@ import {
   RgpdSchoolConfig,
   generateRgpdAttestationPDF
 } from '../utils/rgpdPdfGenerator';
+import { useSchoolName } from '../utils/branding';
 
 export function RgpdComplianceView() {
+  // Nom de l'établissement : toujours celui de la gestion centralisée (identité de l'établissement)
+  const nomEtab = useSchoolName();
   const [activeSection, setActiveSection] = useState<
     'synthese' | 'registre' | 'securite' | 'droits' | 'full_text' | 'edit' | 'lxc_guide'
   >('synthese');
   const [cryptoStatus, setCryptoStatus] = useState<any>(null);
 
   // Dynamic RGPD Config & Markdown
-  const [config, setConfig] = useState<RgpdSchoolConfig>(DEFAULT_RGPD_CONFIG);
+  const [config, setConfig] = useState<RgpdSchoolConfig>({ ...DEFAULT_RGPD_CONFIG, etablissement: nomEtab });
+  useEffect(() => {
+    setConfig((prev) => (prev.etablissement === nomEtab ? prev : { ...prev, etablissement: nomEtab }));
+  }, [nomEtab]);
   const [markdownText, setMarkdownText] = useState<string>('');
   const [initialLoading, setInitialLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -31434,7 +31798,7 @@ export function RgpdComplianceView() {
         if (data.success) {
           if (data.markdown) setMarkdownText(data.markdown);
           if (data.config) {
-            setConfig((prev) => ({ ...prev, ...data.config }));
+            setConfig((prev) => ({ ...prev, ...data.config, etablissement: nomEtab }));
           }
         }
       })
@@ -31505,7 +31869,7 @@ export function RgpdComplianceView() {
       const data = await res.json();
       if (data.success) {
         setMarkdownText(data.markdown);
-        setConfig(DEFAULT_RGPD_CONFIG);
+        setConfig({ ...DEFAULT_RGPD_CONFIG, etablissement: nomEtab });
         setSaveMessage({ type: 'success', text: 'Modèle officiel d’origine rétabli avec succès.' });
         setTimeout(() => setSaveMessage(null), 4000);
       }
@@ -32272,9 +32636,11 @@ export function RgpdComplianceView() {
                 <input
                   type="text"
                   value={config.etablissement}
-                  onChange={(e) => setConfig({ ...config, etablissement: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-blue-900 focus:outline-none"
+                  readOnly
+                  title="Géré par la gestion centralisée du portail NDM (ou Identité & Logo)"
+                  className="w-full px-3 py-2 border border-slate-200 bg-slate-50 text-slate-600 rounded-xl font-medium focus:outline-none"
                 />
+                <p className="text-[10px] text-slate-500 mt-1">Modifiable dans Portail &gt; Admin &gt; Gestion centralisée (ou « Identité &amp; Logo »).</p>
               </div>
 
               <div>
@@ -32748,6 +33114,7 @@ chmod +x /opt/infirmerie/deploy.sh
 
 <!-- SCRIPT-START:apps/infirmerie/src/components/SchoolBrandingModal.tsx -->
 ```tsx
+import { getSchoolName } from '../utils/branding';
 import { useState } from 'react';
 import { SchoolBranding } from '../types';
 import { School, Upload, RotateCcw, Save, X, Check, Image as ImageIcon, AlertCircle } from 'lucide-react';
@@ -32765,7 +33132,7 @@ export function SchoolBrandingModal({
   branding,
   onSaved,
 }: SchoolBrandingModalProps) {
-  const [schoolName, setSchoolName] = useState(branding?.schoolName || 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE');
+  const [schoolName, setSchoolName] = useState(branding?.schoolName || getSchoolName());
   const [subTitle, setSubTitle] = useState(branding?.subTitle || "Sous-contrat d'Association avec l'État");
   const [logoDataUrl, setLogoDataUrl] = useState<string>(branding?.logoDataUrl || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -32905,7 +33272,7 @@ export function SchoolBrandingModal({
               type="text"
               value={schoolName}
               onChange={(e) => setSchoolName(e.target.value)}
-              placeholder="Ex: ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE"
+              placeholder="Nom officiel de l'établissement"
               className="w-full text-xs font-semibold px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
               required
             />
@@ -34470,6 +34837,53 @@ export function installApiAuth(): void {
 ```
 <!-- SCRIPT-END:apps/infirmerie/src/utils/apiAuth.ts -->
 
+## `apps/infirmerie/src/utils/branding.ts`
+
+<!-- SCRIPT-START:apps/infirmerie/src/utils/branding.ts -->
+```typescript
+import { useEffect, useState } from 'react';
+
+/**
+ * Nom de l'établissement — source UNIQUE pour tous les écrans et tous les PDF de la Fiche Infirmerie
+ * (build etablissement-central-20261011). Il vient de GET /api/branding, lui-même mis à jour par la
+ * gestion centralisée du portail NDM ou par le bouton « Identité & Logo » du tableau de bord.
+ */
+export const NOM_PAR_DEFAUT = 'Ensemble Scolaire Notre-Dame des Missions';
+
+let nomCourant = NOM_PAR_DEFAUT;
+const abonnes = new Set<(n: string) => void>();
+
+export function getSchoolName(): string {
+  return nomCourant;
+}
+
+/** Version en majuscules (en-têtes officiels, PDF) */
+export function getSchoolNameUpper(): string {
+  return nomCourant.toLocaleUpperCase('fr-FR');
+}
+
+export function setSchoolName(nom: string | undefined | null): void {
+  const n = (nom || '').trim();
+  if (!n || n === nomCourant) return;
+  nomCourant = n;
+  document.title = `Fiche Infirmerie Numérique – ${n}`;
+  abonnes.forEach((f) => f(n));
+}
+
+export function useSchoolName(): string {
+  const [nom, setNom] = useState(nomCourant);
+  useEffect(() => {
+    abonnes.add(setNom);
+    setNom(nomCourant);
+    return () => {
+      abonnes.delete(setNom);
+    };
+  }, []);
+  return nom;
+}
+```
+<!-- SCRIPT-END:apps/infirmerie/src/utils/branding.ts -->
+
 ## `apps/infirmerie/src/utils/logoHelper.ts`
 
 <!-- SCRIPT-START:apps/infirmerie/src/utils/logoHelper.ts -->
@@ -34620,6 +35034,7 @@ export async function getSchoolLogoDataUrl(): Promise<string> {
 import { jsPDF } from 'jspdf';
 import { FicheInfirmerieData, VaccinationDetail } from '../types';
 import { getSchoolLogoDataUrl } from './logoHelper';
+import { getSchoolName, getSchoolNameUpper } from './branding';
 
 export function sanitizeFileName(name: string): string {
   return name
@@ -34829,7 +35244,7 @@ export async function generateFichePDF(data: FicheInfirmerieData): Promise<Blob>
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.setTextColor(primaryNavy[0], primaryNavy[1], primaryNavy[2]);
-  doc.text('ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE', margin + 17, y + 6);
+  doc.text(getSchoolNameUpper(), margin + 17, y + 6);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
@@ -35172,7 +35587,7 @@ export async function generateFichePDF(data: FicheInfirmerieData): Promise<Blob>
   doc.setFontSize(6.8);
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
 
-  const clause1 = "• L'École Notre-Dame des Missions-St-Pierre à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.";
+  const clause1 = "• " + getSchoolName() + " à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.";
   const clause2 = "• Le praticien à pratiquer tout examen médical ou chirurgical nécessaire à l'établissement d'un diagnostic, et toute intervention médicale ou chirurgicale y compris avec phase d'anesthésie-réanimation que nécessiterait l'état de santé de mon enfant.";
 
   const split1 = doc.splitTextToSize(clause1, contentWidth - 55);
@@ -35344,7 +35759,7 @@ export async function generateCarnetPDF(data: FicheInfirmerieData): Promise<Blob
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(15, 37, 87);
-    doc.text('ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE', margin, 15);
+    doc.text(getSchoolNameUpper(), margin, 15);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
@@ -35432,7 +35847,7 @@ export interface RgpdSchoolConfig {
 }
 
 export const DEFAULT_RGPD_CONFIG: RgpdSchoolConfig = {
-  etablissement: 'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre',
+  etablissement: 'Ensemble Scolaire Notre-Dame des Missions',
   statut: "Établissement Catholique d'Enseignement sous contrat d'association avec l'État",
   adresse: '80 rue du Maréchal Foch, 94220 Charenton-le-Pont',
   reference: 'CDC-RGPD-INFIRMERIE-NDM-2026-V1',
@@ -36003,7 +36418,7 @@ async function changerMotDePasse(db, { app, type, id, password }) {
       const u = ((data && data[K_USERS]) || []).find((x) => x && x.id === id);
       if (!u) throw new Error('Compte introuvable dans la Fiche Sanitaire.');
       await call('fichesanitaire', 'POST', '/api/users/upsert', { user: { ...u, password: pwd } });
-      return `Mot de passe de ${u.name || u.email} (${u.email}) modifié dans la Fiche Sanitaire.`;
+      return { message: `Mot de passe de ${u.name || u.email} (${u.email}) modifié dans la Fiche Sanitaire.`, parentEmail: u.role === 'parent' ? String(u.email || '').trim().toLowerCase() : null, source: 'fichesanitaire' };
     }
     if (type === 'trip') {
       const trips = (data && data[K_TRIPS]) || [];
@@ -36017,7 +36432,7 @@ async function changerMotDePasse(db, { app, type, id, password }) {
 
   if (app === 'infirmerie' && (type === 'staff' || type === 'parent')) {
     const r = await call('infirmerie', 'POST', '/api/internal/set-password', { kind: type, id, password: pwd });
-    return r.message || 'Mot de passe modifié dans la Fiche Infirmerie.';
+    return { message: r.message || 'Mot de passe modifié dans la Fiche Infirmerie.', parentEmail: type === 'parent' ? r.email || null : null, source: 'infirmerie' };
   }
 
   if (app === 'voyages') {
@@ -36063,6 +36478,175 @@ module.exports = { APPS, MIN_LEN, etatComplet, changerEtablissement, changerMotD
 ```
 <!-- SCRIPT-END:apps/portail/package.json -->
 
+## `apps/portail/parents.js`
+
+<!-- SCRIPT-START:apps/portail/parents.js -->
+```javascript
+// ============================================================================
+//  Portail NDM — COMPTES PARENTS COMMUNS Fiche Sanitaire <-> Fiche Infirmerie
+//  (build parents-communs-20261011)
+//
+//  Un parent = UNE adresse e-mail = UN compte valable dans les deux applications.
+//  - Compte présent d'un seul côté                 -> créé de l'autre côté (identité + empreintes)
+//  - Mot de passe changé d'un côté                 -> recopié de l'autre côté
+//  - Mots de passe différents des deux côtés sans
+//    historique commun (comptes créés séparément)  -> CONFLIT signalé dans la console centrale
+//  - Compte supprimé d'un côté après synchronisation -> NON recréé (suppression respectée)
+//  Aucune donnée en clair : seules les empreintes (formats compris par les deux applications) circulent,
+//  sur le réseau Docker interne. État de synchronisation : table portail_parents_sync (empreinte SHA-256
+//  de l'empreinte commune, jamais l'empreinte elle-même).
+//  Déclenchement : signal des applications à chaque modification de comptes (1,5 s), toutes les 5 min,
+//  bouton « Synchroniser maintenant » de la console centrale.
+// ============================================================================
+const crypto = require('crypto');
+
+const SECRET = process.env.NDM_INTERNAL_SECRET || '';
+const FS_URL = process.env.INTERNAL_URL_FICHESANITAIRE || 'http://fichesanitaire:3000';
+const INF_URL = process.env.INTERNAL_URL_INFIRMERIE || 'http://infirmerie:3001';
+
+const fp = (h) => (h ? crypto.createHash('sha256').update(String(h)).digest('hex') : null);
+
+async function api(base, header, method, path, body) {
+  const res = await fetch(base + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', [header]: SECRET },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(15000),
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* vide */ }
+  if (!res.ok) throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
+  return data;
+}
+const fsApi = (m, p, b) => api(FS_URL, 'X-Local-Tool', m, p, b);
+const infApi = (m, p, b) => api(INF_URL, 'X-Ndm-Internal', m, p, b);
+
+async function migrate(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS portail_parents_sync (
+      email       VARCHAR(200) PRIMARY KEY,
+      last_fp     VARCHAR(64),
+      in_fs       BOOLEAN NOT NULL DEFAULT FALSE,
+      in_inf      BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+let enCours = null;
+let relancer = false;
+let dernier = { date: null, rapport: null, erreur: null };
+
+/**
+ * Synchronise les comptes parents. prefer = { email, source: 'fichesanitaire'|'infirmerie' } force
+ * l'alignement d'un compte en conflit sur l'application choisie.
+ */
+async function synchroniser(db, prefer) {
+  if (enCours) {
+    if (!prefer) { relancer = true; return enCours; }
+    await enCours.catch(() => {});
+  }
+  enCours = (async () => {
+    const rapport = { creesFs: [], creesInf: [], alignesFs: [], alignesInf: [], conflits: [], ignores: [], communs: 0, synchronises: 0, totalFs: 0, totalInf: 0 };
+    try {
+      if (!SECRET || SECRET.length < 24) throw new Error('NDM_INTERNAL_SECRET absent du .env');
+      const [fsRes, infRes, st] = await Promise.all([
+        fsApi('GET', '/api/internal/parents'),
+        infApi('GET', '/api/internal/parents'),
+        db.query('SELECT * FROM portail_parents_sync'),
+      ]);
+      const fsMap = new Map((fsRes.parents || []).filter((p) => p.email).map((p) => [p.email, p]));
+      const infMap = new Map((infRes.parents || []).filter((p) => p.email).map((p) => [p.email, p]));
+      const etat = new Map(st.rows.map((r) => [r.email, r]));
+      rapport.totalFs = fsMap.size;
+      rapport.totalInf = infMap.size;
+
+      const save = (email, lastFp, inFs, inInf) =>
+        db.query(
+          `INSERT INTO portail_parents_sync (email, last_fp, in_fs, in_inf, updated_at) VALUES ($1,$2,$3,$4,NOW())
+           ON CONFLICT (email) DO UPDATE SET last_fp=$2, in_fs=$3, in_inf=$4, updated_at=NOW()`,
+          [email, lastFp, inFs, inInf]
+        );
+
+      const emails = new Set([...fsMap.keys(), ...infMap.keys()]);
+      for (const email of emails) {
+        const a = fsMap.get(email);
+        const b = infMap.get(email);
+        const s = etat.get(email);
+        try {
+          if (a && b) {
+            rapport.communs++;
+            const fa = fp(a.passwordHash);
+            const fb = fp(b.passwordHash);
+            if (!fa || !fb) { rapport.ignores.push({ email, raison: 'mot de passe ancien format (synchronisé après la prochaine connexion)' }); continue; }
+            if (fa === fb) { rapport.synchronises++; if (!s || s.last_fp !== fa || !s.in_fs || !s.in_inf) await save(email, fa, true, true); continue; }
+            let source = null;
+            if (prefer && prefer.email === email) source = prefer.source;
+            else if (s && s.last_fp === fb) source = 'fichesanitaire'; // l'Infirmerie n'a pas bougé : la Fiche Sanitaire a changé
+            else if (s && s.last_fp === fa) source = 'infirmerie';
+            if (!source) { rapport.conflits.push({ email, nom: `${b.prenom || a.prenom || ''} ${b.nom || a.nom || ''}`.trim() }); continue; }
+            if (source === 'fichesanitaire') {
+              await infApi('POST', '/api/internal/parents/import', { mode: 'password', parent: a });
+              rapport.alignesInf.push(email);
+              await save(email, fa, true, true);
+            } else {
+              await fsApi('POST', '/api/internal/parents/import', { mode: 'password', parent: b });
+              rapport.alignesFs.push(email);
+              await save(email, fb, true, true);
+            }
+            rapport.synchronises++;
+          } else if (a && !b) {
+            if (s && s.in_inf) { await save(email, s.last_fp, true, false); rapport.ignores.push({ email, raison: 'supprimé de la Fiche Infirmerie : non recréé' }); continue; }
+            if (!a.passwordHash) { rapport.ignores.push({ email, raison: 'mot de passe ancien format' }); continue; }
+            await infApi('POST', '/api/internal/parents/import', { mode: 'create', parent: a });
+            rapport.creesInf.push(email);
+            await save(email, fp(a.passwordHash), true, true);
+          } else if (b && !a) {
+            if (s && s.in_fs) { await save(email, s.last_fp, false, true); rapport.ignores.push({ email, raison: 'supprimé de la Fiche Sanitaire : non recréé' }); continue; }
+            if (!b.passwordHash) { rapport.ignores.push({ email, raison: 'mot de passe absent' }); continue; }
+            try {
+              await fsApi('POST', '/api/internal/parents/import', { mode: 'create', parent: b });
+            } catch (e) {
+              if (/email-exists/.test(e.message)) { rapport.ignores.push({ email, raison: 'adresse déjà utilisée par un compte du personnel de la Fiche Sanitaire' }); continue; }
+              throw e;
+            }
+            rapport.creesFs.push(email);
+            await save(email, fp(b.passwordHash), true, true);
+          }
+        } catch (e) {
+          rapport.ignores.push({ email, raison: 'erreur : ' + e.message });
+        }
+      }
+      dernier = { date: new Date(), rapport, erreur: null };
+      const n = rapport.creesFs.length + rapport.creesInf.length + rapport.alignesFs.length + rapport.alignesInf.length;
+      if (n) console.log(`[parents-communs] ${rapport.creesInf.length} créé(s) Infirmerie, ${rapport.creesFs.length} créé(s) Fiche Sanitaire, ${rapport.alignesInf.length + rapport.alignesFs.length} mot(s) de passe aligné(s), ${rapport.conflits.length} conflit(s)`);
+      return rapport;
+    } catch (e) {
+      dernier = { date: new Date(), rapport: null, erreur: e.message };
+      throw e;
+    }
+  })();
+  try {
+    return await enCours;
+  } finally {
+    enCours = null;
+    if (relancer) {
+      relancer = false;
+      setTimeout(() => synchroniser(db).catch(() => {}), 500);
+    }
+  }
+}
+
+function demarrer(db) {
+  // 1re synchronisation 20 s après le démarrage (applications prêtes), puis toutes les 5 minutes
+  setTimeout(() => synchroniser(db).catch((e) => console.error('[parents-communs]', e.message)), 20000);
+  setInterval(() => synchroniser(db).catch((e) => console.error('[parents-communs]', e.message)), 5 * 60000).unref();
+}
+
+module.exports = { migrate, synchroniser, demarrer, etat: () => dernier };
+```
+<!-- SCRIPT-END:apps/portail/parents.js -->
+
 ## `apps/portail/server.js`
 
 <!-- SCRIPT-START:apps/portail/server.js -->
@@ -36082,6 +36666,7 @@ const bcrypt  = require('bcryptjs');
 const path    = require('path');
 const { Pool } = require('pg');
 const centrale = require('./centrale');
+const parents = require('./parents');
 
 console.log('[portail] build ndm-sante-portail + centrale-20261011');
 
@@ -36196,6 +36781,8 @@ async function migrate() {
     await ins(null, 'Fiche Infirmerie', '🏥', SYSTEM_URLS.infirmerie, 2, false, 'infirmerie');
     console.log('[portail] Menus par défaut créés');
   }
+
+  await parents.migrate(db);
 
   // Les menus système suivent toujours les URL du fichier .env
   for (const [code, url] of Object.entries(SYSTEM_URLS)) {
@@ -36413,7 +37000,7 @@ app.post('/admin/config', requireAdmin, wrap(async (req, res) => {
 app.get('/admin/centrale', requireAdmin, wrap(async (req, res) => {
   const etat = await centrale.etatComplet(db);
   const journal = await db.query('SELECT date, ip, action FROM portail_audit ORDER BY date DESC LIMIT 60');
-  res.render('admin/centrale', { ...etat, journal: journal.rows, apps: centrale.APPS, minLen: centrale.MIN_LEN, msg: req.query.msg, err: req.query.err });
+  res.render('admin/centrale', { ...etat, parentsSync: parents.etat(), journal: journal.rows, apps: centrale.APPS, minLen: centrale.MIN_LEN, msg: req.query.msg, err: req.query.err });
 }));
 
 app.post('/admin/centrale/etablissement', requireAdmin, wrap(async (req, res) => {
@@ -36432,14 +37019,64 @@ app.post('/admin/centrale/etablissement', requireAdmin, wrap(async (req, res) =>
 app.post('/admin/centrale/mot-de-passe', requireAdmin, async (req, res) => {
   const { app: appKey, type, id, libelle } = req.body || {};
   try {
-    const message = await centrale.changerMotDePasse(db, req.body || {});
+    const r = await centrale.changerMotDePasse(db, req.body || {});
+    let message = typeof r === 'string' ? r : r.message;
     await audit(req, `Mot de passe redéfini — ${appKey} / ${type} : ${String(libelle || id || '').slice(0, 200)}`);
+    // Compte parent commun : le nouveau mot de passe est aussitôt recopié dans l'autre application
+    if (r && typeof r === 'object' && r.parentEmail) {
+      try {
+        const rap = await parents.synchroniser(db, { email: r.parentEmail, source: r.source });
+        if (rap.alignesFs.includes(r.parentEmail) || rap.alignesInf.includes(r.parentEmail)) {
+          message += ' Compte commun : mot de passe également appliqué à ' + (r.source === 'infirmerie' ? 'la Fiche Sanitaire.' : 'la Fiche Infirmerie.');
+        }
+      } catch (e) {
+        message += ` (Synchronisation du compte commun en attente : ${e.message})`;
+      }
+    }
     res.json({ ok: true, message });
   } catch (e) {
     await audit(req, `ÉCHEC changement de mot de passe — ${appKey} / ${type} : ${String(libelle || id || '').slice(0, 200)} (${e.message})`);
     res.status(400).json({ ok: false, error: e.message });
   }
 });
+
+// --- Comptes parents communs Fiche Sanitaire <-> Fiche Infirmerie ---
+function appelInterne(req) {
+  const s = process.env.NDM_INTERNAL_SECRET || '';
+  const g = String(req.headers['x-ndm-internal'] || '');
+  if (s.length < 24 || !g) return false;
+  const a = require('crypto').createHash('sha256').update(s).digest();
+  const b = require('crypto').createHash('sha256').update(g).digest();
+  return require('crypto').timingSafeEqual(a, b);
+}
+// Signal envoyé par les applications à chaque modification de comptes (réseau Docker interne uniquement)
+app.post('/internal/parents/sync', (req, res) => {
+  if (!appelInterne(req)) return res.status(403).json({ ok: false });
+  parents.synchroniser(db).catch((e) => console.error('[parents-communs]', e.message));
+  res.json({ ok: true });
+});
+
+app.post('/admin/centrale/parents/sync', requireAdmin, wrap(async (req, res) => {
+  try {
+    const r = await parents.synchroniser(db);
+    await audit(req, `Synchronisation manuelle des comptes parents (${r.creesFs.length + r.creesInf.length} créé(s), ${r.alignesFs.length + r.alignesInf.length} aligné(s), ${r.conflits.length} conflit(s))`);
+    res.redirect('/admin/centrale?msg=' + encodeURIComponent(`Comptes parents synchronisés : ${r.creesInf.length} créé(s) dans l'Infirmerie, ${r.creesFs.length} dans la Fiche Sanitaire, ${r.alignesFs.length + r.alignesInf.length} mot(s) de passe aligné(s), ${r.conflits.length} conflit(s).`) + '#parents');
+  } catch (e) {
+    res.redirect('/admin/centrale?err=' + encodeURIComponent('Synchronisation impossible : ' + e.message) + '#parents');
+  }
+}));
+
+app.post('/admin/centrale/parents/aligner', requireAdmin, wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const source = req.body.source === 'infirmerie' ? 'infirmerie' : 'fichesanitaire';
+  try {
+    await parents.synchroniser(db, { email, source });
+    await audit(req, `Compte parent commun ${email} aligné sur le mot de passe de ${source === 'infirmerie' ? 'la Fiche Infirmerie' : 'la Fiche Sanitaire'}`);
+    res.redirect('/admin/centrale?msg=' + encodeURIComponent(`Compte ${email} : le mot de passe ${source === 'infirmerie' ? 'de la Fiche Infirmerie' : 'de la Fiche Sanitaire'} est maintenant valable dans les deux applications.`) + '#parents');
+  } catch (e) {
+    res.redirect('/admin/centrale?err=' + encodeURIComponent(e.message) + '#parents');
+  }
+}));
 
 app.use((err, req, res, next) => {
   console.error('[portail] Erreur :', err);
@@ -36458,6 +37095,7 @@ app.use((err, req, res, next) => {
   }
   const port = process.env.PORT || 3020;
   app.listen(port, '0.0.0.0', () => console.log(`✅ Portail NDM démarré sur le port ${port}`));
+  parents.demarrer(db);
 })();
 ```
 <!-- SCRIPT-END:apps/portail/server.js -->
@@ -36529,6 +37167,7 @@ app.use((err, req, res, next) => {
     .resultat { margin-top:.9rem; font-size:.84rem; display:none; }
     .force { font-size:.75rem; margin-top:.4rem; color:#666; }
     @media (max-width:800px) { .noms { grid-template-columns:1fr 1fr; } }
+    @media (max-width:560px) { #parents .compte form { width:100%; } #parents .compte form .btn { flex:1; } }
     @media (max-width:560px) {
       .container { padding:1rem .7rem; } .card { padding:1rem; }
       .noms { grid-template-columns:1fr; }
@@ -36575,6 +37214,45 @@ app.use((err, req, res, next) => {
       </div>
       <label class="check"><input type="checkbox" name="maj_titre" value="1"> Mettre aussi à jour le titre du portail (« Portail de santé – nom »)</label>
     </form>
+  </div>
+
+  <!-- ============================ COMPTES PARENTS COMMUNS ============================ -->
+  <div class="card" id="parents">
+    <h2>👨‍👩‍👧 Comptes parents communs (Fiche Sanitaire ⇄ Fiche Infirmerie)</h2>
+    <p class="aide">Un parent n'a qu'<b>un seul compte</b> (son adresse e-mail) pour les deux applications : un compte créé dans l'une est créé automatiquement dans l'autre, et un changement de mot de passe (par le parent, « mot de passe oublié » ou cette console) est recopié dans l'autre. Synchronisation immédiate à chaque modification, et contrôle toutes les 5 minutes. Un compte supprimé d'un côté n'est pas recréé.</p>
+    <% const ps = parentsSync || {}; const r = ps.rapport; %>
+    <% if (ps.erreur) { %><div class="alert ko">Dernière synchronisation en échec : <%= ps.erreur %></div><% } %>
+    <% if (r) { %>
+      <div class="noms">
+        <div class="nom"><b>Fiche Sanitaire</b><div class="v"><%= r.totalFs %> compte(s) parent</div></div>
+        <div class="nom"><b>Fiche Infirmerie</b><div class="v"><%= r.totalInf %> compte(s) parent</div></div>
+        <div class="nom"><b>Comptes communs</b><div class="v"><%= r.synchronises %> synchronisé(s)</div><span class="pill <%= r.conflits.length ? 'p-diff' : 'p-ok' %>"><%= r.conflits.length %> conflit(s)</span></div>
+        <div class="nom"><b>Dernier passage</b><div class="v"><%= new Date(ps.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }) %></div>
+          <% const n = r.creesFs.length + r.creesInf.length + r.alignesFs.length + r.alignesInf.length; %><span class="pill p-ok"><%= n %> modification(s)</span></div>
+      </div>
+    <% } else if (!ps.erreur) { %><div class="vide">Première synchronisation en cours (environ 20 secondes après le démarrage)…</div><% } %>
+
+    <form method="POST" action="/admin/centrale/parents/sync" style="margin:.4rem 0 .8rem"><button class="btn btn-primary" type="submit">🔄 Synchroniser maintenant</button></form>
+
+    <% if (r && r.conflits.length) { %>
+      <div class="groupe">Conflits à résoudre — parents inscrits séparément dans les deux applications avec des mots de passe différents</div>
+      <p class="aide" style="margin-bottom:.4rem">Choisissez le mot de passe à conserver : il deviendra valable dans les deux applications (prévenez le parent). Vous pouvez aussi définir un nouveau mot de passe depuis l'onglet de l'une des deux applications ci-dessous.</p>
+      <% r.conflits.forEach(c => { %>
+        <div class="compte">
+          <div class="t"><b><%= c.nom || c.email %></b><span><%= c.email %></span></div>
+          <form method="POST" action="/admin/centrale/parents/aligner" style="display:flex;gap:.4rem;flex-wrap:wrap">
+            <input type="hidden" name="email" value="<%= c.email %>">
+            <button class="btn btn-ghost btn-sm" name="source" value="fichesanitaire" type="submit">Garder celui de la Fiche Sanitaire</button>
+            <button class="btn btn-ghost btn-sm" name="source" value="infirmerie" type="submit">Garder celui de l'Infirmerie</button>
+          </form>
+        </div>
+      <% }) %>
+    <% } %>
+    <% if (r && r.ignores.length) { %>
+      <details style="margin-top:.6rem;font-size:.8rem"><summary style="cursor:pointer;color:#555"><%= r.ignores.length %> compte(s) non synchronisé(s) — détails</summary>
+        <ul style="margin:.4rem 0 0 1.2rem;color:#555"><% r.ignores.forEach(i => { %><li><%= i.email %> : <%= i.raison %></li><% }) %></ul>
+      </details>
+    <% } %>
   </div>
 
   <!-- ============================ MOTS DE PASSE ============================ -->
@@ -42524,7 +43202,7 @@ export class Database {
 
   // Nom de l'établissement (gestion centralisée)
   getEtablissement(): string {
-    return (this.data.etablissementNom || '').trim() || ETABLISSEMENT_DEFAUT;
+    return (this.data.etablissementNom || '').trim() || (process.env.ETABLISSEMENT_NOM || '').trim() || ETABLISSEMENT_DEFAUT;
   }
 
   /** Change le nom ; les voyages qui portaient l'ancien nom (ou le nom par défaut) suivent. Retourne le nb de voyages mis à jour. */

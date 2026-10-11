@@ -1,3 +1,4 @@
+import { getSchoolName } from '../utils/branding';
 import { Shield, School, LayoutDashboard, FileText, Lock, LogOut, UserCheck } from 'lucide-react';
 import { ParentProfile, SchoolBranding } from '../types';
 
@@ -28,7 +29,7 @@ export function Header({
   onAdminLogout,
   branding,
 }: HeaderProps) {
-  const schoolName = branding?.schoolName || 'ENSEMBLE SCOLAIRE NOTRE-DAME DES MISSIONS – SAINT-PIERRE';
+  const schoolName = branding?.schoolName || getSchoolName();
   const subTitle = branding?.subTitle || "Sous-contrat d'Association avec l'État";
   const logoSrc = branding?.logoDataUrl && branding.logoDataUrl.trim() ? branding.logoDataUrl : '/logo.svg';
 

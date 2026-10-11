@@ -1,5 +1,6 @@
 import { FicheInfirmerieData } from '../types';
 import { SignaturePad } from './SignaturePad';
+import { useSchoolName } from '../utils/branding';
 import { FileCheck, Shield, CheckCircle2 } from 'lucide-react';
 
 interface AuthorizationSectionProps {
@@ -11,6 +12,7 @@ interface AuthorizationSectionProps {
 }
 
 export function AuthorizationSection({ data, onChange, onNext, onPrev, errors }: AuthorizationSectionProps) {
+  const nomEtab = useSchoolName();
   const updateAuth = (field: keyof FicheInfirmerieData['autorisationParentale'], value: any) => {
     onChange((prev) => ({
       ...prev,
@@ -40,7 +42,7 @@ export function AuthorizationSection({ data, onChange, onNext, onPrev, errors }:
             </h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Reprise intégrale du texte officiel d'autorisation de l'Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre.
+            Reprise intégrale du texte officiel d'autorisation de l'établissement ({nomEtab}).
           </p>
         </div>
 
@@ -124,7 +126,7 @@ export function AuthorizationSection({ data, onChange, onNext, onPrev, errors }:
             <div className="flex items-start gap-2.5">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-900 mt-2 shrink-0"></span>
               <p>
-                <strong>L'École Notre-Dame des Missions-St-Pierre</strong> à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.
+                <strong>{nomEtab}</strong> à prendre, le cas échéant, toutes mesures (visite médicale, hospitalisation, transport en voiture, intervention des secours – pompiers ou SAMU) rendues nécessaires par l'état de santé de mon enfant.
               </p>
             </div>
 

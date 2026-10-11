@@ -65,7 +65,32 @@ async function hashSecret(plain) {
   const key = await scrypt(String(plain), salt, 64, { N, r, p, maxmem: 64 * 1024 * 1024 });
   return `scrypt$${N}$${r}$${p}$${salt.toString('base64')}$${key.toString('base64')}`;
 }
+// Empreintes venant de la Fiche Infirmerie (comptes parents communs, build parents-communs-20261011) :
+//  - mot de passe : pbkdf2-sha512$<itérations>$<sel hex>$<empreinte hex>
+//  - réponse secrète : pbkdf2a-sha256$<itérations>$<sel hex>$<empreinte hex> (réponse sans accents, minuscules)
+function verifyForeign(plain, stored) {
+  const parts = String(stored || '').split('$');
+  if (parts.length !== 4) return null;
+  const [kind, iter, salt, hex] = parts;
+  let input = String(plain);
+  let digest, len;
+  if (kind === 'pbkdf2-sha512') { digest = 'sha512'; len = 64; }
+  else if (kind === 'pbkdf2a-sha256') {
+    digest = 'sha256'; len = 32;
+    input = input.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  } else return null;
+  try {
+    const got = crypto.pbkdf2Sync(input, salt, Number(iter), len, digest);
+    const exp = Buffer.from(hex, 'hex');
+    return got.length === exp.length && crypto.timingSafeEqual(got, exp);
+  } catch {
+    return false;
+  }
+}
+
 async function verifyHash(plain, stored) {
+  const foreign = verifyForeign(plain, stored);
+  if (foreign !== null) return foreign;
   try {
     const parts = String(stored || '').split('$');
     if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
@@ -150,6 +175,7 @@ function install(app, deps) {
   // --- secret des outils locaux (rattacher-fiche.sh, commandes du README) ---
   const SECRET_FILE = path.join(__dirname, '..', '.local-tool-secret');
   let TOOL_SECRET = process.env.LOCAL_TOOL_SECRET || '';
+  const TOOL_SECRET_ENV = TOOL_SECRET; // secret partagé NDM (vide hors plateforme NDM : pas de synchronisation)
   if (!TOOL_SECRET) {
     try {
       TOOL_SECRET = crypto.randomBytes(32).toString('hex');
@@ -171,9 +197,25 @@ function install(app, deps) {
   const invalidateUsers = () => {
     usersCache = null;
   };
+  // Comptes parents communs : chaque modification de comptes prévient le portail NDM, qui synchronise
+  // avec la Fiche Infirmerie (appel interne, sans donnée, regroupé sur 1,5 s)
+  let pingTimer = null;
+  let pingSuspendu = false;
+  function pingSyncParents() {
+    if (pingSuspendu || !TOOL_SECRET_ENV || pingTimer) return;
+    pingTimer = setTimeout(() => {
+      pingTimer = null;
+      fetch((process.env.NDM_PORTAIL_INTERNAL_URL || 'http://portail:3020') + '/internal/parents/sync', {
+        method: 'POST',
+        headers: { 'X-Ndm-Internal': TOOL_SECRET_ENV },
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
+    }, 1500);
+  }
   async function saveUsers(list) {
     await writeKv(K.users, list);
     invalidateUsers();
+    pingSyncParents();
   }
 
   // --- sessions ---
@@ -314,6 +356,8 @@ function install(app, deps) {
     ['POST', /^\/api\/auth\/change-password$/, 'user'],
     ['POST', /^\/api\/auth\/impersonate$/, 'admin'],
     ['POST', /^\/api\/auth\/test-token$/, 'system'],
+    ['GET', /^\/api\/internal\/parents$/, 'system'],
+    ['POST', /^\/api\/internal\/parents\/import$/, 'system'],
     ['GET', /^\/api\/magic-link\/[^/]+$/, 'magic'],
     ['PUT', /^\/api\/magic-link\/[^/]+$/, 'magic'],
     ['GET', /^\/api\/(popups\/public|year-end\/public)$/, 'public'],
@@ -507,6 +551,7 @@ function install(app, deps) {
       req.body.user = await mergeUser(base, incoming);
       invalidateUsers();
       res.on('finish', invalidateUsers);
+      res.on('finish', pingSyncParents);
       return next();
     }
     // un utilisateur ne modifie que son propre profil : jamais son rôle, ses voyages ni son mot de passe
@@ -564,6 +609,83 @@ function install(app, deps) {
     }
     return deny(res, 403, 'forbidden');
   }
+
+  // --- comptes parents communs avec la Fiche Infirmerie (appel système du portail NDM uniquement) ---
+  app.get('/api/internal/parents', async (req, res) => {
+    const users = (await readKv(K.users)) || [];
+    res.json({
+      parents: users
+        .filter((u) => u && u.role === 'parent' && u.email)
+        .map((u) => ({
+          email: String(u.email).trim().toLowerCase(),
+          nom: u.lastName || u.name || '',
+          prenom: u.firstName || '',
+          telephone: u.phone || '',
+          passwordHash: u.passwordHash || null, // ancien format en clair : synchronisé après sa 1re connexion
+          secretQuestion: u.secretQuestion || '',
+          secretAnswerHash: u.secretAnswerHash || null,
+        })),
+    });
+  });
+
+  app.post('/api/internal/parents/import', async (req, res) => {
+    const { parent: p, mode } = req.body || {};
+    if (!p || !p.email || !p.passwordHash) return deny(res, 400, 'parent invalide');
+    const email = String(p.email).trim().toLowerCase();
+    const release = await deps.lockUserWrites();
+    let cree = null;
+    pingSuspendu = true; // une importation venant du portail ne relance pas une synchronisation
+    try {
+      const users = (await readKv(K.users)) || [];
+      const i = users.findIndex((u) => u && String(u.email || '').toLowerCase() === email);
+      if (mode === 'create') {
+        if (i !== -1) return deny(res, 409, 'email-exists');
+        cree = {
+          id: 'parent-' + Date.now() + '-' + crypto.randomBytes(2).toString('hex'),
+          name: `${clip(p.prenom, 80)} ${clip(p.nom, 80)}`.trim() || email,
+          firstName: clip(p.prenom, 80),
+          lastName: clip(p.nom, 80),
+          email,
+          phone: clip(p.telephone, 40),
+          role: 'parent',
+          passwordHash: String(p.passwordHash),
+          secretQuestion: clip(p.secretQuestion, 200),
+          secretAnswerHash: p.secretAnswerHash ? String(p.secretAnswerHash) : undefined,
+          isDemo: false,
+          syncedFrom: 'infirmerie',
+        };
+        if (!cree.secretAnswerHash) delete cree.secretAnswerHash;
+        users.push(cree);
+      } else if (mode === 'password') {
+        if (i === -1 || users[i].role !== 'parent') return deny(res, 404, 'no-account');
+        users[i].passwordHash = String(p.passwordHash);
+        delete users[i].password;
+        if (p.secretAnswerHash) {
+          users[i].secretAnswerHash = String(p.secretAnswerHash);
+          delete users[i].secretAnswer;
+          if (p.secretQuestion) users[i].secretQuestion = clip(p.secretQuestion, 200);
+        }
+        revokeUserSessions(users[i].id);
+      } else {
+        return deny(res, 400, 'mode invalide');
+      }
+      await saveUsers(users);
+    } finally {
+      pingSuspendu = false;
+      release();
+    }
+    if (cree) {
+      try {
+        await deps.commSendWelcome({ id: cree.id, name: cree.name, firstName: cree.firstName, lastName: cree.lastName });
+      } catch (e) {
+        console.error("[auth] Message d'accueil impossible :", e.message);
+      }
+      console.log(`[parents-communs] compte parent ${email} créé depuis la Fiche Infirmerie`);
+    } else {
+      console.log(`[parents-communs] mot de passe du parent ${email} aligné sur la Fiche Infirmerie`);
+    }
+    res.json({ ok: true });
+  });
 
   // --- connexion ---
   const sessionOut = (user, sess) => ({ ok: true, token: sess.token, expiresAt: sess.expiresAt, user: sanitizeUser(user) });

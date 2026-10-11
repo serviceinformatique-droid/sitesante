@@ -61,6 +61,7 @@
     .resultat { margin-top:.9rem; font-size:.84rem; display:none; }
     .force { font-size:.75rem; margin-top:.4rem; color:#666; }
     @media (max-width:800px) { .noms { grid-template-columns:1fr 1fr; } }
+    @media (max-width:560px) { #parents .compte form { width:100%; } #parents .compte form .btn { flex:1; } }
     @media (max-width:560px) {
       .container { padding:1rem .7rem; } .card { padding:1rem; }
       .noms { grid-template-columns:1fr; }
@@ -107,6 +108,45 @@
       </div>
       <label class="check"><input type="checkbox" name="maj_titre" value="1"> Mettre aussi à jour le titre du portail (« Portail de santé – nom »)</label>
     </form>
+  </div>
+
+  <!-- ============================ COMPTES PARENTS COMMUNS ============================ -->
+  <div class="card" id="parents">
+    <h2>👨‍👩‍👧 Comptes parents communs (Fiche Sanitaire ⇄ Fiche Infirmerie)</h2>
+    <p class="aide">Un parent n'a qu'<b>un seul compte</b> (son adresse e-mail) pour les deux applications : un compte créé dans l'une est créé automatiquement dans l'autre, et un changement de mot de passe (par le parent, « mot de passe oublié » ou cette console) est recopié dans l'autre. Synchronisation immédiate à chaque modification, et contrôle toutes les 5 minutes. Un compte supprimé d'un côté n'est pas recréé.</p>
+    <% const ps = parentsSync || {}; const r = ps.rapport; %>
+    <% if (ps.erreur) { %><div class="alert ko">Dernière synchronisation en échec : <%= ps.erreur %></div><% } %>
+    <% if (r) { %>
+      <div class="noms">
+        <div class="nom"><b>Fiche Sanitaire</b><div class="v"><%= r.totalFs %> compte(s) parent</div></div>
+        <div class="nom"><b>Fiche Infirmerie</b><div class="v"><%= r.totalInf %> compte(s) parent</div></div>
+        <div class="nom"><b>Comptes communs</b><div class="v"><%= r.synchronises %> synchronisé(s)</div><span class="pill <%= r.conflits.length ? 'p-diff' : 'p-ok' %>"><%= r.conflits.length %> conflit(s)</span></div>
+        <div class="nom"><b>Dernier passage</b><div class="v"><%= new Date(ps.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }) %></div>
+          <% const n = r.creesFs.length + r.creesInf.length + r.alignesFs.length + r.alignesInf.length; %><span class="pill p-ok"><%= n %> modification(s)</span></div>
+      </div>
+    <% } else if (!ps.erreur) { %><div class="vide">Première synchronisation en cours (environ 20 secondes après le démarrage)…</div><% } %>
+
+    <form method="POST" action="/admin/centrale/parents/sync" style="margin:.4rem 0 .8rem"><button class="btn btn-primary" type="submit">🔄 Synchroniser maintenant</button></form>
+
+    <% if (r && r.conflits.length) { %>
+      <div class="groupe">Conflits à résoudre — parents inscrits séparément dans les deux applications avec des mots de passe différents</div>
+      <p class="aide" style="margin-bottom:.4rem">Choisissez le mot de passe à conserver : il deviendra valable dans les deux applications (prévenez le parent). Vous pouvez aussi définir un nouveau mot de passe depuis l'onglet de l'une des deux applications ci-dessous.</p>
+      <% r.conflits.forEach(c => { %>
+        <div class="compte">
+          <div class="t"><b><%= c.nom || c.email %></b><span><%= c.email %></span></div>
+          <form method="POST" action="/admin/centrale/parents/aligner" style="display:flex;gap:.4rem;flex-wrap:wrap">
+            <input type="hidden" name="email" value="<%= c.email %>">
+            <button class="btn btn-ghost btn-sm" name="source" value="fichesanitaire" type="submit">Garder celui de la Fiche Sanitaire</button>
+            <button class="btn btn-ghost btn-sm" name="source" value="infirmerie" type="submit">Garder celui de l'Infirmerie</button>
+          </form>
+        </div>
+      <% }) %>
+    <% } %>
+    <% if (r && r.ignores.length) { %>
+      <details style="margin-top:.6rem;font-size:.8rem"><summary style="cursor:pointer;color:#555"><%= r.ignores.length %> compte(s) non synchronisé(s) — détails</summary>
+        <ul style="margin:.4rem 0 0 1.2rem;color:#555"><% r.ignores.forEach(i => { %><li><%= i.email %> : <%= i.raison %></li><% }) %></ul>
+      </details>
+    <% } %>
   </div>
 
   <!-- ============================ MOTS DE PASSE ============================ -->

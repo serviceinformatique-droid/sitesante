@@ -7,6 +7,7 @@ import { EditStudentClassModal } from './EditStudentClassModal';
 import { RgpdComplianceView } from './RgpdComplianceView';
 import { ChangeStaffPasswordModal } from './ChangeStaffPasswordModal';
 import { withStaffToken } from '../utils/apiAuth';
+import { useSchoolName } from '../utils/branding';
 import { SchoolBrandingModal } from './SchoolBrandingModal';
 import { SchoolBranding } from '../types';
 import {
@@ -56,6 +57,7 @@ export function AdminDashboard({
   branding,
   onBrandingChange,
 }: AdminDashboardProps) {
+  const nomEtab = useSchoolName();
   const [fiches, setFiches] = useState<FicheInfirmerieData[]>([]);
   const [classesList, setClassesList] = useState<string[]>(SCHOOL_CLASSES);
   const [loading, setLoading] = useState(true);
@@ -478,7 +480,7 @@ export function AdminDashboard({
               </h1>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Ensemble Scolaire Notre-Dame des Missions – Saint-Pierre • Année {schoolYear}
+              {nomEtab} • Année {schoolYear}
             </p>
           </div>
 
