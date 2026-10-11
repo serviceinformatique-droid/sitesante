@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <title>Gestion centralisée – Portail NDM</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#f0f2f5; color:#1a1a2e; min-height:100vh; }
+    .topbar { background:#1e3c72; color:white; padding:.75rem 1.5rem; display:flex; align-items:center; justify-content:space-between; gap:.75rem; flex-wrap:wrap; }
+    .topbar h1 { font-size:1.05rem; font-weight:600; }
+    .topbar-right { display:flex; gap:.5rem; flex-wrap:wrap; }
+    .btn-nav { background:rgba(255,255,255,.15); color:white; padding:.4rem .8rem; border-radius:6px; font-size:.8rem; text-decoration:none; }
+    .btn-nav:hover { background:rgba(255,255,255,.25); }
+    .container { max-width:1100px; margin:0 auto; padding:1.5rem; }
+    .card { background:white; border-radius:12px; padding:1.25rem 1.5rem; box-shadow:0 2px 10px rgba(0,0,0,.07); margin-bottom:1.25rem; }
+    h2 { font-size:1.08rem; color:#1e3c72; margin-bottom:.6rem; }
+    p.aide { font-size:.83rem; color:#555; margin-bottom:1rem; line-height:1.45; }
+    .alert { padding:.75rem 1rem; border-radius:8px; margin-bottom:1rem; font-size:.9rem; line-height:1.4; }
+    .ok { background:#d4edda; color:#155724; } .ko { background:#fdecea; color:#8a1c12; }
+    .btn { padding:.55rem 1.1rem; border-radius:8px; border:none; cursor:pointer; font-size:.86rem; font-weight:600; }
+    .btn-primary { background:#1e3c72; color:white; } .btn-primary:hover { background:#2a52a0; }
+    .btn-ghost { background:#eef1f6; color:#1e3c72; } .btn-ghost:hover { background:#dfe5ef; }
+    .btn-sm { padding:.38rem .75rem; font-size:.78rem; }
+    input[type=text], input[type=search], input[type=password] { width:100%; padding:.62rem .85rem; border:1.5px solid #d7dbe2; border-radius:8px; font-size:16px; outline:none; }
+    input:focus { border-color:#1e3c72; }
+    .noms { display:grid; grid-template-columns:repeat(4,1fr); gap:.6rem; margin:.25rem 0 1rem; }
+    .nom { border:1px solid #e6e9ef; border-radius:10px; padding:.6rem .75rem; font-size:.8rem; }
+    .nom b { display:block; color:#1e3c72; margin-bottom:.2rem; }
+    .nom .v { color:#333; word-break:break-word; }
+    .pill { display:inline-block; font-size:.68rem; padding:.1rem .5rem; border-radius:20px; font-weight:700; margin-top:.35rem; }
+    .p-ok { background:#e3f6e8; color:#1d6b33; } .p-diff { background:#fff4d6; color:#7a5800; } .p-ko { background:#fdecea; color:#8a1c12; }
+    .row-form { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+    .row-form input[type=text] { flex:1; min-width:220px; }
+    .check { display:flex; align-items:center; gap:.4rem; font-size:.83rem; margin-top:.6rem; }
+    .tabs { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.9rem; }
+    .tab { border:1.5px solid #d7dbe2; background:white; padding:.45rem .85rem; border-radius:20px; font-size:.82rem; cursor:pointer; font-weight:600; color:#444; }
+    .tab.active { background:#1e3c72; color:white; border-color:#1e3c72; }
+    .tab .n { font-weight:400; opacity:.8; }
+    .panel { display:none; } .panel.active { display:block; }
+    .groupe { font-size:.72rem; text-transform:uppercase; letter-spacing:.5px; color:#70809a; margin:1rem 0 .35rem; font-weight:700; }
+    .compte { display:flex; align-items:center; gap:.75rem; padding:.6rem .2rem; border-bottom:1px solid #f0f2f5; }
+    .compte .t { flex:1; min-width:0; }
+    .compte .t b { font-size:.88rem; display:block; overflow-wrap:anywhere; }
+    .compte .t span { font-size:.76rem; color:#666; overflow-wrap:anywhere; }
+    .badge { font-size:.68rem; background:#fff4d6; color:#7a5800; padding:.1rem .45rem; border-radius:20px; font-weight:700; margin-left:.3rem; white-space:nowrap; }
+    .vide { font-size:.85rem; color:#777; padding:.5rem 0; }
+    table { width:100%; border-collapse:collapse; font-size:.8rem; }
+    td { padding:.45rem .3rem; border-bottom:1px solid #f0f2f5; vertical-align:top; }
+    td.d { white-space:nowrap; color:#666; width:1%; }
+    .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:50; padding:1rem; }
+    .modal-bg.open { display:flex; }
+    .modal { background:white; border-radius:14px; padding:1.5rem; width:460px; max-width:100%; box-shadow:0 20px 60px rgba(0,0,0,.3); }
+    .modal h3 { color:#1e3c72; font-size:1rem; margin-bottom:.3rem; }
+    .modal .sous { font-size:.8rem; color:#666; margin-bottom:1rem; overflow-wrap:anywhere; }
+    .pwd-row { display:flex; gap:.4rem; }
+    .pwd-row input { flex:1; font-family:ui-monospace,Consolas,monospace; }
+    .modal .actions { display:flex; gap:.6rem; justify-content:flex-end; margin-top:1.1rem; flex-wrap:wrap; }
+    .resultat { margin-top:.9rem; font-size:.84rem; display:none; }
+    .force { font-size:.75rem; margin-top:.4rem; color:#666; }
+    @media (max-width:800px) { .noms { grid-template-columns:1fr 1fr; } }
+    @media (max-width:560px) {
+      .container { padding:1rem .7rem; } .card { padding:1rem; }
+      .noms { grid-template-columns:1fr; }
+      .compte { flex-wrap:wrap; } .compte .btn { width:100%; }
+      .row-form .btn { width:100%; }
+      td.d { white-space:normal; }
+    }
+  </style>
+</head>
+<body>
+<div class="topbar">
+  <h1>🔐 Gestion centralisée – Portail NDM</h1>
+  <div class="topbar-right">
+    <a href="/admin" class="btn-nav">← Menus du portail</a>
+    <a href="/" class="btn-nav">👁️ Voir le portail</a>
+    <a href="/admin/logout" class="btn-nav">Déconnexion</a>
+  </div>
+</div>
+
+<div class="container">
+  <% if (msg) { %><div class="alert ok">✅ <%= msg %></div><% } %>
+  <% if (err) { %><div class="alert ko">⚠️ <%= err %></div><% } %>
+
+  <!-- ============================ ÉTABLISSEMENT ============================ -->
+  <div class="card">
+    <h2>🏫 Nom de l'établissement</h2>
+    <p class="aide">Modifié ici, le nom est appliqué en une fois à la <b>Fiche Sanitaire</b> (fiches, PDF, relances), à la <b>Fiche Infirmerie</b> (en-tête, PDF), au <b>Suivi des Voyages</b> (en-tête, pied de page, voyages existants qui portaient l'ancien nom) et, si vous cochez la case, au titre du <b>portail</b>.</p>
+    <div class="noms">
+      <% const lib = { portail:'Portail (titre)', fichesanitaire:'Fiche Sanitaire', infirmerie:'Fiche Infirmerie', voyages:'Suivi des Voyages' };
+         Object.keys(lib).forEach(k => { const n = noms[k]; %>
+        <div class="nom">
+          <b><%= lib[k] %></b>
+          <% if (!n.ok) { %><span class="pill p-ko">injoignable</span><div class="v" style="font-size:.72rem;color:#8a1c12;margin-top:.3rem"><%= n.error %></div>
+          <% } else { %><div class="v"><%= n.valeur || '—' %></div>
+            <% if (k !== 'portail') { %><span class="pill <%= (central && n.valeur === central) ? 'p-ok' : 'p-diff' %>"><%= (central && n.valeur === central) ? 'à jour' : 'différent' %></span><% } %>
+          <% } %>
+        </div>
+      <% }) %>
+    </div>
+    <form method="POST" action="/admin/centrale/etablissement" onsubmit="return confirm('Appliquer ce nom aux 4 applications ?')">
+      <div class="row-form">
+        <input type="text" name="nom" value="<%= central %>" minlength="3" maxlength="150" required placeholder="Ex : Ensemble Scolaire Notre-Dame des Missions">
+        <button class="btn btn-primary" type="submit">Appliquer partout</button>
+      </div>
+      <label class="check"><input type="checkbox" name="maj_titre" value="1"> Mettre aussi à jour le titre du portail (« Portail de santé – nom »)</label>
+    </form>
+  </div>
+
+  <!-- ============================ MOTS DE PASSE ============================ -->
+  <div class="card">
+    <h2>🔑 Mots de passe de toutes les applications</h2>
+    <p class="aide">Définissez un nouveau mot de passe pour n'importe quel compte (au moins <%= minLen %> caractères). Le bouton <b>Générer</b> propose un mot de passe robuste : <b>notez-le avant de fermer</b>, il n'est affiché qu'une fois et n'est jamais enregistré en clair dans le portail. Les sessions ouvertes du compte concerné sont fermées (Fiche Infirmerie). Chaque changement est inscrit au journal ci-dessous.</p>
+    <% const ordre = [['portail','Portail'],['fichesanitaire','Fiche Sanitaire'],['infirmerie','Fiche Infirmerie'],['voyages','Suivi des Voyages']]; %>
+    <div class="tabs">
+      <% ordre.forEach(([k, l], i) => { %>
+        <button type="button" class="tab <%= i === 0 ? 'active' : '' %>" data-tab="<%= k %>"><%= l %> <span class="n">(<%= comptes[k].lignes.length %>)</span></button>
+      <% }) %>
+    </div>
+    <input type="search" id="filtre" placeholder="🔎 Rechercher un compte (nom, e-mail…)" style="margin-bottom:.4rem">
+    <% ordre.forEach(([k, l], i) => { const c = comptes[k]; let g = null; %>
+      <div class="panel <%= i === 0 ? 'active' : '' %>" id="panel-<%= k %>">
+        <% if (!c.ok) { %><div class="alert ko">Application injoignable : <%= c.error %></div><% } %>
+        <% if (c.ok && !c.lignes.length) { %><div class="vide">Aucun compte.</div><% } %>
+        <% c.lignes.forEach(x => { if (x.groupe && x.groupe !== g) { g = x.groupe; %><div class="groupe"><%= g %></div><% } %>
+          <div class="compte" data-texte="<%= (x.titre + ' ' + (x.detail || '')).toLowerCase() %>">
+            <div class="t"><b><%= x.titre %><% if (x.badge) { %><span class="badge"><%= x.badge %></span><% } %></b><span><%= x.detail %></span></div>
+            <button type="button" class="btn btn-ghost btn-sm js-mdp" data-app="<%= k %>" data-type="<%= x.type %>" data-id="<%= x.id %>" data-libelle="<%= l %> › <%= x.titre %>" data-detail="<%= x.detail %>">Changer le mot de passe</button>
+          </div>
+        <% }) %>
+      </div>
+    <% }) %>
+  </div>
+
+  <!-- ============================ JOURNAL ============================ -->
+  <div class="card">
+    <h2>📜 Journal des actions (60 dernières)</h2>
+    <% if (!journal.length) { %><div class="vide">Aucune action enregistrée.</div><% } else { %>
+    <table>
+      <% journal.forEach(j => { %>
+        <tr><td class="d"><%= new Date(j.date).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }) %></td><td><%= j.action %> <span style="color:#999">— <%= j.ip %></span></td></tr>
+      <% }) %>
+    </table>
+    <% } %>
+  </div>
+</div>
+
+<!-- Fenêtre de changement de mot de passe -->
+<div class="modal-bg" id="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-titre">
+    <h3 id="m-titre">Nouveau mot de passe</h3>
+    <div class="sous" id="m-sous"></div>
+    <div class="pwd-row">
+      <input type="password" id="m-pwd" autocomplete="new-password" minlength="<%= minLen %>" maxlength="128" placeholder="Nouveau mot de passe">
+      <button type="button" class="btn btn-ghost btn-sm" id="m-voir" title="Afficher / masquer">👁️</button>
+    </div>
+    <div class="force" id="m-force"></div>
+    <div class="actions">
+      <button type="button" class="btn btn-ghost" id="m-gen">🎲 Générer</button>
+      <button type="button" class="btn btn-ghost" id="m-copier">📋 Copier</button>
+      <button type="button" class="btn btn-ghost" id="m-annuler">Fermer</button>
+      <button type="button" class="btn btn-primary" id="m-ok">Enregistrer</button>
+    </div>
+    <div class="resultat alert" id="m-res"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var MIN = <%= minLen %>;
+  var cible = null;
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Onglets
+  document.querySelectorAll('.tab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('active', x === b); });
+      document.querySelectorAll('.panel').forEach(function (p) { p.classList.toggle('active', p.id === 'panel-' + b.dataset.tab); });
+    });
+  });
+  // Recherche
+  $('filtre').addEventListener('input', function () {
+    var q = this.value.trim().toLowerCase();
+    document.querySelectorAll('.compte').forEach(function (c) { c.style.display = !q || c.dataset.texte.indexOf(q) !== -1 ? '' : 'none'; });
+  });
+
+  function generer() {
+    var a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789', s = '-_!*';
+    var r = new Uint32Array(16); crypto.getRandomValues(r);
+    var out = '';
+    for (var i = 0; i < 14; i++) out += a[r[i] % a.length];
+    return out.slice(0, 7) + s[r[14] % s.length] + out.slice(7) ;
+  }
+  function force() {
+    var v = $('m-pwd').value, n = 0;
+    if (v.length >= MIN) n++; if (v.length >= 12) n++;
+    if (/[A-Z]/.test(v) && /[a-z]/.test(v)) n++; if (/\d/.test(v)) n++; if (/[^A-Za-z0-9]/.test(v)) n++;
+    $('m-force').textContent = v ? (v.length < MIN ? '⚠️ Trop court (' + MIN + ' caractères minimum)' : 'Robustesse : ' + ['faible', 'faible', 'moyenne', 'bonne', 'très bonne', 'excellente'][n]) : '';
+  }
+  function ouvrir(btn) {
+    cible = btn.dataset;
+    $('m-sous').textContent = cible.libelle + (cible.detail ? ' — ' + cible.detail : '');
+    $('m-pwd').value = ''; $('m-pwd').type = 'password';
+    $('m-res').style.display = 'none'; $('m-ok').disabled = false; force();
+    $('modal').classList.add('open');
+    setTimeout(function () { $('m-pwd').focus(); }, 50);
+  }
+  function fermer() { $('modal').classList.remove('open'); $('m-pwd').value = ''; cible = null; }
+
+  document.querySelectorAll('.js-mdp').forEach(function (b) { b.addEventListener('click', function () { ouvrir(b); }); });
+  $('m-annuler').addEventListener('click', fermer);
+  $('modal').addEventListener('click', function (e) { if (e.target === $('modal')) fermer(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') fermer(); });
+  $('m-voir').addEventListener('click', function () { $('m-pwd').type = $('m-pwd').type === 'password' ? 'text' : 'password'; });
+  $('m-gen').addEventListener('click', function () { $('m-pwd').value = generer(); $('m-pwd').type = 'text'; force(); });
+  $('m-copier').addEventListener('click', function () {
+    var v = $('m-pwd').value; if (!v) return;
+    (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(function () { $('m-force').textContent = '📋 Copié dans le presse-papiers'; }).catch(function () { $('m-pwd').type = 'text'; $('m-pwd').select(); });
+  });
+  $('m-pwd').addEventListener('input', force);
+  $('m-pwd').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('m-ok').click(); });
+
+  $('m-ok').addEventListener('click', function () {
+    var v = $('m-pwd').value;
+    if (!cible) return;
+    if (v.length < MIN) { force(); return; }
+    $('m-ok').disabled = true;
+    fetch('/admin/centrale/mot-de-passe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', cache: 'no-store',
+      body: JSON.stringify({ app: cible.app, type: cible.type, id: cible.id, libelle: cible.libelle, password: v })
+    }).then(function (r) { return r.json().catch(function () { return { ok: false, error: 'Réponse invalide (HTTP ' + r.status + ')' }; }); })
+      .then(function (j) {
+        var el = $('m-res'); el.style.display = 'block';
+        el.className = 'resultat alert ' + (j.ok ? 'ok' : 'ko');
+        el.textContent = j.ok ? '✅ ' + j.message + ' Communiquez le nouveau mot de passe à la personne concernée.' : '⚠️ ' + j.error;
+        if (!j.ok) $('m-ok').disabled = false;
+      })
+      .catch(function (e) { var el = $('m-res'); el.style.display = 'block'; el.className = 'resultat alert ko'; el.textContent = '⚠️ ' + e.message; $('m-ok').disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>

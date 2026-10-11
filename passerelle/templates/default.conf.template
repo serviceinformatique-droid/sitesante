@@ -1,0 +1,64 @@
+# ============================================================================
+#  Passerelle NDM Santé — généré au démarrage par l'image nginx (envsubst)
+#  ${FRAME_ANCESTORS} vient de /opt/ndm-sante/.env ("*" = tous les sites)
+# ============================================================================
+map $http_upgrade $ndm_connection { default upgrade; '' close; }
+map $http_x_forwarded_proto $ndm_proto { default $http_x_forwarded_proto; '' $scheme; }
+
+# DNS interne Docker : un conteneur redémarré (nouvelle IP) est retrouvé automatiquement
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+client_max_body_size 60M;
+server_tokens off;
+etag off;
+if_modified_since off;
+gzip on;
+gzip_types text/css application/javascript application/json image/svg+xml text/plain text/markdown;
+
+# Portail (hub iframe)
+server {
+    listen 8080;
+    server_name _;
+    location / {
+        set $ndm_up http://portail:3020;
+        proxy_pass $ndm_up;
+        include /etc/nginx/ndm-proxy.conf;
+        add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
+    }
+}
+
+# Fiche Sanitaire de Liaison
+server {
+    listen 8099;
+    server_name _;
+    location / {
+        set $ndm_up http://fichesanitaire:3000;
+        proxy_pass $ndm_up;
+        include /etc/nginx/ndm-proxy.conf;
+        add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
+    }
+}
+
+# Fiche Infirmerie
+server {
+    listen 3001;
+    server_name _;
+    location / {
+        set $ndm_up http://infirmerie:3001;
+        proxy_pass $ndm_up;
+        include /etc/nginx/ndm-proxy.conf;
+        add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
+    }
+}
+
+# Suivi des Voyages
+server {
+    listen 3000;
+    server_name _;
+    location / {
+        set $ndm_up http://voyages:3000;
+        proxy_pass $ndm_up;
+        include /etc/nginx/ndm-proxy.conf;
+        add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
+    }
+}

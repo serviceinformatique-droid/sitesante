@@ -1,0 +1,163 @@
+# ============================================================================
+#  NDM SANTÉ — plateforme fusionnée (4 projets) — /opt/ndm-sante/docker-compose.yml
+#  Portail (hub iframe) + Fiche Sanitaire + Fiche Infirmerie + Suivi des Voyages
+#  Toutes les valeurs viennent de /opt/ndm-sante/.env (créé par l'installateur)
+#  Commandes : bash /opt/ndm-sante/scripts/ndm.sh etat|logs|redemarrer|maj|...
+# ============================================================================
+name: ndm-sante
+
+services:
+  # --- Base PostgreSQL commune (bases : fichesanitaire + portail) -------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ndm_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ndm
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: fichesanitaire
+      TZ: ${TZ:-Europe/Paris}
+    volumes:
+      - ndm_pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ndm -d fichesanitaire && psql -U ndm -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='portail'\" | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [ndm_net]
+
+  # --- Portail (hub : menus + iframe) ----------------------------------------
+  portail:
+    build: ./apps/portail
+    image: ndm-sante/portail:latest
+    container_name: ndm_portail
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PORT: 3020
+      TZ: ${TZ:-Europe/Paris}
+      DATABASE_URL: postgresql://ndm:${DB_PASSWORD}@postgres:5432/portail
+      SESSION_SECRET: ${SESSION_SECRET}
+      PORTAIL_ADMIN_PASSWORD: ${PORTAIL_ADMIN_PASSWORD}
+      PORTAIL_MENU_PASSWORD: ${PORTAIL_MENU_PASSWORD}
+      URL_FICHESANITAIRE: ${URL_FICHESANITAIRE}
+      URL_INFIRMERIE: ${URL_INFIRMERIE}
+      URL_VOYAGES: ${URL_VOYAGES}
+      FRAME_ANCESTORS: ${FRAME_ANCESTORS:-*}
+      NDM_INTERNAL_SECRET: ${NDM_INTERNAL_SECRET}
+      ETABLISSEMENT_NOM: ${ETABLISSEMENT_NOM:-Ensemble Scolaire Notre-Dame des Missions}
+    networks: [ndm_net]
+
+  # --- Fiche Sanitaire de Liaison (CERFA 10008*02) ---------------------------
+  fichesanitaire:
+    build: ./apps/fichesanitaire
+    image: ndm-sante/fichesanitaire:latest
+    container_name: ndm_fichesanitaire
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PORT: 3000
+      TZ: ${TZ:-Europe/Paris}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ndm
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: fichesanitaire
+      INITIAL_ADMIN_PASSWORD: ${FICHESANITAIRE_ADMIN_PASSWORD}
+      LOCAL_TOOL_SECRET: ${NDM_INTERNAL_SECRET}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      PORTAL_URL: ${URL_FICHESANITAIRE}
+      CRON_SCHEDULE: ${CRON_SCHEDULE:-0 8 * * 1}
+      CRON_TIMEZONE: ${TZ:-Europe/Paris}
+      TRASH_RETENTION_DAYS: ${TRASH_RETENTION_DAYS:-30}
+      BACKUP_RETENTION_HOURS: ${BACKUP_RETENTION_HOURS:-336}
+      PDF_ARCHIVE_DIR: /app/fiches-pdf
+      BACKUP_DIR: /app/backups
+    volumes:
+      - ./donnees/fichesanitaire/fiches-pdf:/app/fiches-pdf
+      - ./donnees/fichesanitaire/backups:/app/backups
+    networks: [ndm_net]
+
+  # --- Fiche Infirmerie Numérique (données chiffrées AES-256 sur disque) ------
+  infirmerie:
+    build: ./apps/infirmerie
+    image: ndm-sante/infirmerie:latest
+    container_name: ndm_infirmerie
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      TZ: ${TZ:-Europe/Paris}
+      INFIRMERIE_STAFF_PASSWORD: ${INFIRMERIE_STAFF_PASSWORD}
+      NDM_INTERNAL_SECRET: ${NDM_INTERNAL_SECRET}
+      SESSION_TTL_HOURS: 8
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL:-}
+      NEXTCLOUD_USERNAME: ${NEXTCLOUD_USERNAME:-}
+      NEXTCLOUD_PASSWORD: ${NEXTCLOUD_PASSWORD:-}
+      NEXTCLOUD_ROOT_FOLDER: ${NEXTCLOUD_ROOT_FOLDER:-FICHES INFIRMERIE}
+    volumes:
+      - ./donnees/infirmerie:/app/data
+    networks: [ndm_net]
+
+  # --- Suivi des Voyages Scolaires (DocuSeal, pièces jointes) ---------------
+  voyages:
+    build: ./apps/voyages
+    image: ndm-sante/voyages:latest
+    container_name: ndm_voyages
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      TZ: ${TZ:-Europe/Paris}
+      ADMIN_PASSWORD: ${VOYAGES_ADMIN_PASSWORD}
+      NDM_INTERNAL_SECRET: ${NDM_INTERNAL_SECRET}
+      CONSULTATION_PASSWORD: ${VOYAGES_CONSULTATION_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      FRAME_ANCESTORS: ${FRAME_ANCESTORS:-*}
+      ALLOW_INSECURE_TLS: ${ALLOW_INSECURE_TLS:-false}
+      APP_URL: ${URL_VOYAGES}
+      PIECES_DIR: /app/pieces-jointes
+      PIECES_PAR_VOYAGE: ${PIECES_PAR_VOYAGE:-true}
+      PIECES_TAILLE_MAX_MO: ${PIECES_TAILLE_MAX_MO:-30}
+      AUTO_SYNC_MINUTES: ${AUTO_SYNC_MINUTES:-15}
+    volumes:
+      - ./donnees/voyages/data:/app/data
+      - ./donnees/voyages/backups:/app/backups
+      - ./donnees/voyages/pieces-jointes:/app/pieces-jointes
+    networks: [ndm_net]
+
+  # --- Passerelle Nginx : 1 port par application, iframe OK, zéro cache -------
+  passerelle:
+    image: nginx:1.27-alpine
+    container_name: ndm_passerelle
+    restart: unless-stopped
+    depends_on: [portail, fichesanitaire, infirmerie, voyages]
+    environment:
+      FRAME_ANCESTORS: ${FRAME_ANCESTORS:-*}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/conf.d
+    volumes:
+      - ./passerelle/templates:/etc/nginx/templates:ro
+      - ./passerelle/ndm-proxy.conf:/etc/nginx/ndm-proxy.conf:ro
+    ports:
+      - "${PORT_PORTAIL:-8080}:8080"
+      - "${PORT_FICHESANITAIRE:-8099}:8099"
+      - "${PORT_INFIRMERIE:-3001}:3001"
+      - "${PORT_VOYAGES:-3000}:3000"
+    networks: [ndm_net]
+
+volumes:
+  ndm_pgdata:
+
+networks:
+  ndm_net:
+    driver: bridge

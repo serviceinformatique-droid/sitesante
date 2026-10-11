@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Administration – Portail NDM</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#f0f2f5; color:#1a1a2e; min-height:100vh; }
+    .topbar { background:#1e3c72; color:white; padding:.75rem 1.5rem; display:flex; align-items:center; justify-content:space-between; }
+    .topbar h1 { font-size:1.05rem; font-weight:600; }
+    .topbar-right { display:flex; gap:.5rem; flex-wrap:wrap; }
+    .btn-nav { background:rgba(255,255,255,.15); border:none; color:white; padding:.35rem .8rem; border-radius:6px; cursor:pointer; font-size:.8rem; text-decoration:none; }
+    .btn-nav:hover { background:rgba(255,255,255,.25); }
+    .container { max-width:1000px; margin:0 auto; padding:2rem 1.5rem; }
+    h2 { font-size:1.1rem; color:#1e3c72; margin-bottom:1rem; font-weight:700; }
+    .card { background:white; border-radius:12px; padding:1.5rem; box-shadow:0 2px 10px rgba(0,0,0,.07); margin-bottom:1.5rem; }
+    .alert { padding:.75rem 1rem; border-radius:8px; margin-bottom:1rem; font-size:.9rem; }
+    .alert-success { background:#d4edda; color:#155724; }
+    .form-row { display:flex; gap:.75rem; margin-bottom:.75rem; flex-wrap:wrap; }
+    .form-group { display:flex; flex-direction:column; gap:.3rem; flex:1; min-width:150px; }
+    .form-group label { font-size:.78rem; font-weight:600; color:#555; text-transform:uppercase; letter-spacing:.3px; }
+    .form-group input, .form-group select { padding:.6rem .85rem; border:1.5px solid #ddd; border-radius:8px; font-size:.875rem; outline:none; transition:border .2s; }
+    .form-group input:focus, .form-group select:focus { border-color:#1e3c72; }
+    .checkbox-row { display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem; }
+    .checkbox-row input[type=checkbox] { width:18px; height:18px; cursor:pointer; }
+    .btn { padding:.6rem 1.25rem; border-radius:8px; border:none; cursor:pointer; font-size:.875rem; font-weight:600; transition:all .2s; }
+    .btn-primary { background:#1e3c72; color:white; }
+    .btn-primary:hover { background:#2a52a0; }
+    .btn-danger { background:#e74c3c; color:white; }
+    .btn-danger:hover { background:#c0392b; }
+    .btn-sm { padding:.4rem .8rem; font-size:.78rem; }
+    .btn-ghost { background:#f0f0f0; color:#333; }
+    .btn-ghost:hover { background:#e0e0e0; }
+    .btn-order { background:#e8f0fe; color:#1e3c72; border:none; border-radius:6px; padding:.3rem .6rem; font-size:.9rem; cursor:pointer; font-weight:700; }
+    .btn-order:hover { background:#c5d8f8; }
+    .menu-item { background:white; border:1.5px solid #e8ecf0; border-radius:10px; margin-bottom:.6rem; overflow:hidden; }
+    .menu-item-header { display:flex; align-items:center; padding:.75rem 1rem; gap:.5rem; }
+    .menu-label { flex:1; font-weight:600; font-size:.9rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+    .badge-protected { background:#fff3cd; color:#856404; font-size:.7rem; padding:.15rem .5rem; border-radius:20px; font-weight:600; }
+    .badge-url { background:#e8f0fe; color:#1e3c72; font-size:.7rem; padding:.15rem .5rem; border-radius:20px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .menu-actions { display:flex; gap:.3rem; align-items:center; }
+    .submenu-list { list-style:none; border-top:1px solid #f0f0f0; }
+    .submenu-item-row { display:flex; align-items:center; padding:.6rem 1rem .6rem 2rem; gap:.5rem; border-bottom:1px solid #f7f7f7; }
+    .sub-sublabel { padding:.5rem 1rem .5rem 3.5rem; font-size:.8rem; border-bottom:1px solid #f7f7f7; display:flex; align-items:center; gap:.5rem; }
+    .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:999; }
+    .modal-bg.open { display:flex; }
+    .modal-box { background:white; border-radius:14px; padding:2rem; width:500px; max-width:95vw; box-shadow:0 20px 60px rgba(0,0,0,.3); max-height:90vh; overflow-y:auto; }
+    .modal-box h3 { color:#1e3c72; margin-bottom:1.25rem; font-size:1.05rem; }
+    .modal-actions { display:flex; gap:.75rem; justify-content:flex-end; margin-top:1.25rem; }
+    .config-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+    .hint { font-size:.8rem; color:#666; margin:-.5rem 0 1rem; }
+    @media (max-width:700px) {
+      .topbar { flex-direction:column; align-items:flex-start; gap:.5rem; padding:.75rem 1rem; }
+      .container { padding:1rem .75rem; }
+      .card { padding:1rem; }
+      .config-grid { grid-template-columns:1fr; }
+      .menu-item-header, .submenu-item-row { flex-wrap:wrap; }
+      .submenu-item-row { padding-left:1rem; }
+      .sub-sublabel { padding-left:1.75rem; flex-wrap:wrap; }
+      .menu-actions { width:100%; justify-content:flex-end; }
+      .badge-url { max-width:100%; }
+      .form-group input, .form-group select { font-size:16px; }
+    }
+  </style>
+</head>
+<body>
+<div class="topbar">
+  <h1>⚙️ Administration – Portail NDM</h1>
+  <div class="topbar-right">
+    <a href="/admin/centrale" class="btn-nav">🔐 Gestion centralisée</a>
+    <a href="/" class="btn-nav">👁️ Voir le portail</a>
+    <a href="/admin/logout" class="btn-nav">Déconnexion</a>
+  </div>
+</div>
+<div class="container">
+  <% if (msg) { %><div class="alert alert-success">✅ <%= msg %></div><% } %>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h2>🗂️ Gestion des menus</h2>
+      <button class="btn btn-primary btn-sm" onclick="openModal('modal-add')">+ Nouveau menu</button>
+    </div>
+    <p class="hint">ℹ️ L'adresse des menus « Fiche Sanitaire », « Suivi des voyages » et « Fiche Infirmerie » est définie dans <code>/opt/ndm-sante/.env</code> (URL_FICHESANITAIRE, URL_VOYAGES, URL_INFIRMERIE) et réappliquée à chaque redémarrage.</p>
+    <ul style="list-style:none;padding:0;margin:0" id="menu-tree">
+      <% menus.forEach(menu => { %>
+      <li class="menu-item" data-id="<%= menu.id %>">
+        <div class="menu-item-header">
+          <span class="menu-label">
+            <%= menu.icone %> <%= menu.titre %>
+            <% if (menu.protege) { %><span class="badge-protected">🔒 Protégé</span><% } %>
+            <% if (menu.url) { %><span class="badge-url"><%= menu.url %></span><% } %>
+          </span>
+          <div class="menu-actions">
+            <button class="btn-order" onclick="deplacer('<%= menu.id %>','up')" title="Monter">↑</button>
+            <button class="btn-order" onclick="deplacer('<%= menu.id %>','down')" title="Descendre">↓</button>
+            <button class="btn btn-ghost btn-sm" onclick="openEdit('<%= menu.id %>','<%= menu.titre.replace(/'/g,`\\'`) %>','<%= menu.icone %>','<%= (menu.url||'').replace(/'/g,`\\'`) %>','','<%= menu.ordre %>','<%= menu.protege ? 1 : 0 %>')">✏️</button>
+            <form method="POST" action="/admin/menus/<%= menu.id %>/supprimer" style="display:inline" onsubmit="return confirm('Supprimer ce menu ?')">
+              <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+            </form>
+          </div>
+        </div>
+        <% if (menu.children && menu.children.length > 0) { %>
+        <ul class="submenu-list">
+          <% menu.children.forEach(child => { %>
+          <li>
+            <div class="submenu-item-row">
+              <span class="menu-label" style="font-size:.875rem">
+                <%= child.icone %> <%= child.titre %>
+                <% if (child.protege) { %><span class="badge-protected">🔒 Protégé</span><% } %>
+                <% if (child.url) { %><span class="badge-url"><%= child.url %></span><% } %>
+              </span>
+              <div class="menu-actions">
+                <button class="btn-order" onclick="deplacer('<%= child.id %>','up')">↑</button>
+                <button class="btn-order" onclick="deplacer('<%= child.id %>','down')">↓</button>
+                <button class="btn btn-ghost btn-sm" onclick="openEdit('<%= child.id %>','<%= child.titre.replace(/'/g,`\\'`) %>','<%= child.icone %>','<%= (child.url||'').replace(/'/g,`\\'`) %>','<%= child.parent_id %>','<%= child.ordre %>','<%= child.protege ? 1 : 0 %>')">✏️</button>
+                <form method="POST" action="/admin/menus/<%= child.id %>/supprimer" style="display:inline" onsubmit="return confirm('Supprimer ?')">
+                  <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+                </form>
+              </div>
+            </div>
+            <% if (child.children && child.children.length > 0) { %>
+            <% child.children.forEach(sub => { %>
+            <div class="sub-sublabel">
+              <span style="flex:1"><%= sub.icone %> <%= sub.titre %> <% if(sub.url){%><span class="badge-url"><%= sub.url %></span><%}%></span>
+              <button class="btn-order" onclick="deplacer('<%= sub.id %>','up')">↑</button>
+              <button class="btn-order" onclick="deplacer('<%= sub.id %>','down')">↓</button>
+              <button class="btn btn-ghost btn-sm" onclick="openEdit('<%= sub.id %>','<%= sub.titre.replace(/'/g,`\\'`) %>','<%= sub.icone %>','<%= (sub.url||'').replace(/'/g,`\\'`) %>','<%= sub.parent_id %>','<%= sub.ordre %>','<%= sub.protege ? 1 : 0 %>')">✏️</button>
+              <form method="POST" action="/admin/menus/<%= sub.id %>/supprimer" style="display:inline" onsubmit="return confirm('Supprimer ?')">
+                <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+              </form>
+            </div>
+            <% }) %>
+            <% } %>
+          </li>
+          <% }) %>
+        </ul>
+        <% } %>
+      </li>
+      <% }) %>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>⚙️ Configuration du portail</h2>
+    <form method="POST" action="/admin/config">
+      <div class="config-grid">
+        <div class="form-group"><label>Titre du portail</label><input type="text" name="titre" value="<%= config.titre %>"></div>
+        <div class="form-group"><label>URL du logo</label><input type="url" name="logo_url" value="<%= config.logo_url %>"></div>
+        <div class="form-group"><label>Nouveau mot de passe admin</label><input type="password" name="nouveau_mdp_admin" placeholder="Laisser vide pour ne pas changer"></div>
+      </div>
+      <div style="margin-top:1rem"><button type="submit" class="btn btn-primary">💾 Sauvegarder</button></div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Ajouter -->
+<div class="modal-bg" id="modal-add">
+  <div class="modal-box">
+    <h3>➕ Nouveau menu</h3>
+    <form method="POST" action="/admin/menus">
+      <div class="form-row">
+        <div class="form-group" style="flex:2"><label>Titre *</label><input type="text" name="titre" required placeholder="Ex: Séjour scolaire"></div>
+        <div class="form-group" style="flex:0.5"><label>Icône</label><input type="text" name="icone" placeholder="🗺️"></div>
+        <div class="form-group" style="flex:0.5"><label>Ordre</label><input type="number" name="ordre" value="0" min="0"></div>
+      </div>
+      <div class="form-group" style="margin-bottom:.75rem"><label>URL (vide si menu parent)</label><input type="text" name="url" placeholder="https://..."></div>
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label>Menu parent</label>
+        <select name="parent_id">
+          <option value="">-- Aucun (menu principal) --</option>
+          <% allMenus.forEach(m => { %><option value="<%= m.id %>"><%= m.icone %> <%= m.titre %></option><% }) %>
+        </select>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" name="protege" id="add-protege" value="1" onchange="document.getElementById('add-pwd-group').style.display=this.checked?'flex':'none'">
+        <label for="add-protege">🔒 Protéger par un mot de passe</label>
+      </div>
+      <div class="form-group" id="add-pwd-group" style="display:none;margin-bottom:.75rem">
+        <label>Mot de passe du menu</label>
+        <input type="password" name="mot_de_passe" placeholder="Mot de passe">
+      </div>
+      <div class="modal-actions">
+        <button type="button" onclick="closeModal('modal-add')" class="btn btn-ghost">Annuler</button>
+        <button type="submit" class="btn btn-primary">Créer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Modifier -->
+<div class="modal-bg" id="modal-edit">
+  <div class="modal-box">
+    <h3>✏️ Modifier le menu</h3>
+    <form method="POST" id="edit-form" action="">
+      <div class="form-row">
+        <div class="form-group" style="flex:2"><label>Titre *</label><input type="text" name="titre" id="edit-titre" required></div>
+        <div class="form-group" style="flex:0.5"><label>Icône</label><input type="text" name="icone" id="edit-icone"></div>
+        <div class="form-group" style="flex:0.5"><label>Ordre</label><input type="number" name="ordre" id="edit-ordre" min="0"></div>
+      </div>
+      <div class="form-group" style="margin-bottom:.75rem"><label>URL</label><input type="text" name="url" id="edit-url" placeholder="https://..."></div>
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label>Menu parent</label>
+        <select name="parent_id" id="edit-parent">
+          <option value="">-- Aucun (menu principal) --</option>
+          <% allMenus.forEach(m => { %><option value="<%= m.id %>"><%= m.icone %> <%= m.titre %></option><% }) %>
+        </select>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" name="protege" id="edit-protege" value="1" onchange="document.getElementById('edit-pwd-group').style.display=this.checked?'flex':'none'">
+        <label for="edit-protege">🔒 Protéger par un mot de passe</label>
+      </div>
+      <div class="form-group" id="edit-pwd-group" style="display:none;margin-bottom:.75rem">
+        <label>Nouveau mot de passe (vide = conserver)</label>
+        <input type="password" name="mot_de_passe" placeholder="Nouveau mot de passe">
+      </div>
+      <div class="modal-actions">
+        <button type="button" onclick="closeModal('modal-edit')" class="btn btn-ghost">Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-bg').forEach(m => {
+  m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); });
+});
+document.addEventListener('keydown', e => {
+  if(e.key==='Escape') document.querySelectorAll('.modal-bg.open').forEach(m=>m.classList.remove('open'));
+});
+
+function openEdit(id, titre, icone, url, parentId, ordre, protege) {
+  document.getElementById('edit-form').action = '/admin/menus/' + id + '/modifier';
+  document.getElementById('edit-titre').value = titre;
+  document.getElementById('edit-icone').value = icone;
+  document.getElementById('edit-url').value   = url;
+  document.getElementById('edit-ordre').value = ordre;
+  document.getElementById('edit-parent').value = parentId || '';
+  const cb = document.getElementById('edit-protege');
+  cb.checked = protege === '1';
+  document.getElementById('edit-pwd-group').style.display = cb.checked ? 'flex' : 'none';
+  openModal('modal-edit');
+}
+
+async function deplacer(id, direction) {
+  const resp = await fetch('/admin/menus/deplacer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, direction })
+  });
+  const json = await resp.json();
+  if (json.success) location.reload();
+  else alert('Erreur : ' + (json.error || 'inconnue'));
+}
+</script>
+</body>
+</html>

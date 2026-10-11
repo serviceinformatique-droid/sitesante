@@ -1,0 +1,15 @@
+{
+  "name": "portail-ndm",
+  "version": "1.0.0",
+  "description": "Portail de santé Notre Dame des Missions",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "connect-pg-simple": "^9.0.1",
+    "ejs": "^3.1.9",
+    "pg": "^8.11.3"
+  }
+}

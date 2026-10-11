@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Connexion – <%= config.titre %></title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+           background:#1e3c72; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { background:white; border-radius:18px; padding:2.5rem 2rem; width:380px; max-width:92vw;
+            box-shadow:0 25px 70px rgba(0,0,0,.35); text-align:center; }
+    .logo { width:90px; height:90px; object-fit:contain; margin-bottom:1rem; border-radius:50%; }
+    h1 { font-size:1.1rem; color:#1e3c72; font-weight:700; margin-bottom:.25rem; }
+    .subtitle { font-size:.85rem; color:#888; margin-bottom:1.75rem; }
+    input { width:100%; padding:.8rem 1rem; border:2px solid #e0e0e0; border-radius:10px;
+            font-size:1rem; margin-bottom:1rem; outline:none; transition:border .2s; }
+    input:focus { border-color:#1e3c72; }
+    button { width:100%; padding:.8rem; background:#1e3c72; color:white; border:none;
+             border-radius:10px; font-size:1rem; font-weight:600; cursor:pointer; transition:background .2s; }
+    button:hover { background:#2a52a0; }
+    .error { color:#c0392b; font-size:.85rem; margin-top:.75rem;
+             background:#fdf0f0; padding:.6rem .9rem; border-radius:8px; }
+    .footer { font-size:.75rem; color:#bbb; margin-top:1.5rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="<%= config.logo_url %>" alt="Logo NDM">
+    <h1><%= config.titre %></h1>
+    <p class="subtitle">Accès réservé au personnel autorisé</p>
+    <form method="POST" action="/login">
+      <input type="password" name="password" placeholder="Mot de passe" autofocus required>
+      <button type="submit">Accéder au portail</button>
+      <% if (error) { %><div class="error">❌ Mot de passe incorrect</div><% } %>
+    </form>
+    <p class="footer">Notre Dame des Missions – 2026-2027</p>
+  </div>
+</body>
+</html>

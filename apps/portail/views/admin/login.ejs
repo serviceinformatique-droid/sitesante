@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Administration – Portail NDM</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+           background:#1e3c72; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { background:white; border-radius:18px; padding:2.5rem 2rem; width:380px; max-width:92vw;
+            box-shadow:0 25px 70px rgba(0,0,0,.35); text-align:center; }
+    h1 { font-size:1.2rem; color:#1e3c72; font-weight:700; margin-bottom:.25rem; }
+    .subtitle { font-size:.85rem; color:#888; margin-bottom:1.75rem; }
+    input { width:100%; padding:.8rem 1rem; border:2px solid #e0e0e0; border-radius:10px;
+            font-size:1rem; margin-bottom:1rem; outline:none; transition:border .2s; }
+    input:focus { border-color:#1e3c72; }
+    button { width:100%; padding:.8rem; background:#1e3c72; color:white; border:none;
+             border-radius:10px; font-size:1rem; font-weight:600; cursor:pointer; }
+    button:hover { background:#2a52a0; }
+    .error { color:#c0392b; font-size:.85rem; margin-top:.75rem;
+             background:#fdf0f0; padding:.6rem .9rem; border-radius:8px; }
+    .back { display:block; margin-top:1rem; font-size:.8rem; color:#888; text-decoration:none; }
+    .back:hover { color:#1e3c72; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:2.5rem;margin-bottom:1rem">⚙️</div>
+    <h1>Administration</h1>
+    <p class="subtitle">Portail Notre Dame des Missions</p>
+    <form method="POST" action="/admin/login">
+      <input type="password" name="password" placeholder="Mot de passe administrateur" autofocus required>
+      <button type="submit">Se connecter</button>
+      <% if (typeof bloque !== 'undefined' && bloque) { %><div class="error">⛔ Trop d'essais infructueux : réessayez dans <%= bloque %> min.</div>
+      <% } else if (error) { %><div class="error">❌ Mot de passe incorrect</div><% } %>
+    </form>
+    <a href="/" class="back">← Retour au portail</a>
+  </div>
+</body>
+</html>

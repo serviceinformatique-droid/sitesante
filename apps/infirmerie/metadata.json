@@ -1,0 +1,6 @@
+{
+  "name": "Fiche Infirmerie Numérique",
+  "description": "Formulaire numérique sécurisé et crypté (AES-256) pour l'infirmerie scolaire avec espace parents authentifié, question secrète, signature électronique, dépôt de carnet de vaccinations, génération PDF A4 officielle et espace admin protégé.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
